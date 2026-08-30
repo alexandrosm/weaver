@@ -26,7 +26,7 @@ const DEFAULT_END_G = "M104 S0\nM140 S0\nM107";
 const P = {
   lattice:"biaxial", pattern:"twill", pitch:3.6, size:30, rot:45,
   bd:0.9, bh:0.45, sw:0.40, sh:0.20,
-  offd:false, offFrac:0.40, ovs:0.30, plies:1, pgap:0.25, tack:3, edge:true,
+  offd:false, offFrac:0.40, ovs:0.30, plies:1, pgap:0.25, tack:3, edge:true, join:true,
   nflat:0.80, ncone:120,
   ps:2400, bs:3600, ts:9000, pspd:300, pstep:3, pflow:1.10, acc:6000,
   ht:230, bt:100, fan:40, bed:[110,110], draft:CREPE.map(r=>r.slice())
@@ -161,7 +161,7 @@ const postVol=()=>{
    dashes breaks that invariant; see NOTES § 3. */
 function toolpath(){
   const ds=allDashes(),vol=postVol(),ops=[],segs=[],seq={};
-  const st={dash:0,bridge:0,travel:0,posts:0,nd:0};
+  const st={dash:0,bridge:0,travel:0,posts:0,nd:0,joins:0};
   let cur=null;
   const travel=(xy,z)=>{
     if(cur&&Math.abs(cur.p[0]-xy[0])<1e-9&&Math.abs(cur.p[1]-xy[1])<1e-9&&Math.abs(cur.z-z)<1e-9) return;
@@ -188,11 +188,27 @@ function toolpath(){
     // on upper plies a post has no bed under it; every Nth one starts from
     // the top of the ply below so the stack is pinned down (both passes)
     const tackZ=k=>(ply>0&&P.tack>0&&k%P.tack===0)?z3()+plyDz(ply-1):null;
+    let prevL=null;
     for(const D of ds){
       if(D.hi) continue;
       const [s0,e0]=dashPts(D),s=put(s0),e=put(e0);
-      travel(s,zl);draw(e,zl,P.ps,"lo",D.L.f);
+      // selvedge U-turn: the serpentine puts consecutive lines' free low
+      // ends side by side in the edge margin, so the inter-line hop can be
+      // DRAWN on the bed instead of travelled — each family's low skeleton
+      // becomes one continuous thread and the fringe closes into a woven
+      // edge. Requires grounding, so every line's pass 1 ends at the
+      // margin; the fold-in order guarantees no neighbouring post exists
+      // yet when the link is drawn.
+      if(P.join&&P.edge&&cur&&prevL&&D.L!==prevL&&D.L.f===prevL.f
+         &&Math.abs(D.L.i-prevL.i)===1&&Math.abs(cur.z-zl)<1e-9
+         &&dist(cur.p,s)<2.5*P.pitch){
+        const Lu=dist(cur.p,s);
+        draw(s,zl,P.ps,"lo",D.L.f);
+        st.dash+=Lu;st.joins++;
+      } else travel(s,zl);
+      draw(e,zl,P.ps,"lo",D.L.f);
       st.dash+=dist(s,e);st.nd++;
+      prevL=D.L;
       if(D.post){
         const c=put(postC(D));
         const ex=offAmt()>0?[2*c[0]-e[0],2*c[1]-e[1]]:c;
@@ -354,6 +370,7 @@ function runCheck(log){
   const cases=[
     ["defaults",{}],
     ["edges off",{edge:false}],
+    ["unjoined",{join:false}],
     ["plain, big button",{pattern:"plain",bd:1.2,bh:0.6,offd:false}],
     ["satin",{pattern:"satin",pitch:4.2}],
     ["custom draft",{pattern:"custom",draft:[[1,0,0,1],[0,1,1,0],[0,1,0,1],[1,0,1,0]]}],
@@ -384,6 +401,9 @@ function runCheck(log){
     // grounding: with edges on, no high dash may end in the air
     if(P.edge) for(const D of tp.ds)
       if(D.hi&&(!D.post||!D.postS)){errs.push("ungrounded boundary high dash");break;}
+    // selvedge: joining must actually join, and only when enabled
+    if(P.join&&P.edge&&tp.st.joins===0) errs.push("no selvedge joins recorded");
+    if(!(P.join&&P.edge)&&tp.st.joins>0) errs.push("joins recorded while disabled");
     // op stream sanity
     if(!tp.ops.length||tp.ops[0].o!=="T") errs.push("op stream does not open with a travel");
     for(const op of tp.ops){
@@ -425,6 +445,7 @@ options mirror the app's parameters:
   --pitch --size --rotate --button-d --button-h --strand-w --strand-h
   --offset-dashes / --no-offset-dashes   --offset-frac --overshoot
   --ground-edges / --no-ground-edges     bed-anchor boundary high runs (default on)
+  --join / --no-join                     selvedge U-turns joining threads at the edge (default on)
   --plies --tack-every --ply-gap
   --print-speed --bridge-speed --travel-speed --post-speed --post-steps
   --post-flow --accel --nozzle-temp --bed-temp --fan --nozzle-flat --nozzle-cone
@@ -459,6 +480,8 @@ outputs (default: --report):
     else if(flag==="no-offset-dashes") P.offd=false;
     else if(flag==="ground-edges") P.edge=true;
     else if(flag==="no-ground-edges") P.edge=false;
+    else if(flag==="join") P.join=true;
+    else if(flag==="no-join") P.join=false;
     else if(flag==="draft"){P.draft=loadDraft(a[++i]||die("--draft needs a path"));P.pattern="custom";}
     else if(flag==="config"){
       const cfg=JSON.parse(fs.readFileSync(a[++i]||die("--config needs a path"),"utf8"));
