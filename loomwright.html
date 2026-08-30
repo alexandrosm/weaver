@@ -236,7 +236,7 @@ textarea:focus-visible{outline:2px solid var(--post);outline-offset:1px}
 </main>
 </div>
 
-<script src="engine.js?v=8"></script>
+<script src="engine.js?v=9"></script>
 <script>
 "use strict";
 /* UI for engine.js, which the script tag above loads first — geometry,
@@ -247,7 +247,8 @@ textarea:focus-visible{outline:2px solid var(--post);outline-offset:1px}
  * ================================================================== */
 const $=id=>document.getElementById(id);
 /* process-only keys change no geometry: recompute metrics without a rebuild */
-const PROC_KEYS=new Set(["ps","bs","ts","acc","pspd","pflow","ht","bt","fan","nflat","ncone"]);
+const PROC_KEYS=new Set(["ps","bs","ts","zhop","retract","retSpeed","primeSpeed",
+  "acc","pspd","pflow","ht","bt","fan","nflat","ncone"]);
 const GROUPS=[
  {t:"Key dimensions",open:true,big:true,items:[
    {k:"pitch",l:"Pitch",u:"mm",min:1.5,max:8,st:0.05,dp:2},
@@ -274,7 +275,7 @@ const GROUPS=[
      {k:"pgap",l:"Ply gap",u:"mm",min:0,max:0.8,st:0.05,dp:2},
      {k:"sw",l:"Strand width",u:"mm",min:0.15,max:0.8,st:0.01,dp:2}]},
    {type:"pair",items:[
-     {k:"sh",l:"Layer height",u:"mm",min:0.05,max:0.4,st:0.01,dp:2}]}]},
+     {k:"sh",l:"Layer height",u:"mm",min:0.05,max:0.6,st:0.01,dp:2}]}]},
  {t:"Nozzle",items:[
    {type:"pair",items:[
      {k:"nflat",l:"Tip flat",u:"mm",min:0.3,max:1.6,st:0.05,dp:2},
@@ -287,6 +288,12 @@ const GROUPS=[
    {type:"pair",items:[
      {k:"ts",l:"Travel speed",u:"mm/m",min:1000,max:20000,st:500,dp:0},
      {k:"acc",l:"Acceleration",u:"mm/s²",min:500,max:20000,st:500,dp:0}]},
+   {type:"pair",items:[
+     {k:"zhop",l:"Travel Z-hop",u:"mm",min:0,max:2,st:0.05,dp:2},
+     {k:"retract",l:"Retraction",u:"mm",min:0,max:2,st:0.05,dp:2}]},
+   {type:"pair",items:[
+     {k:"retSpeed",l:"Retract speed",u:"mm/m",min:300,max:6000,st:100,dp:0},
+     {k:"primeSpeed",l:"Prime speed",u:"mm/m",min:300,max:6000,st:100,dp:0}]},
    {type:"pair",items:[
      {k:"pspd",l:"Post feed",u:"mm/m",min:60,max:1200,st:20,dp:0},
      {k:"pflow",l:"Post flow",u:"×",min:0.6,max:2,st:0.05,dp:2}]},
@@ -904,7 +911,7 @@ $("prsel").addEventListener("click",e=>{
     x.setAttribute("aria-pressed",String(x.dataset.pr===P.printer)));
   lastG=null;
   $("outnote").textContent=P.printer==="coreone"
-    ? "Device-matched Core One 0.6 / Prusament PLA startup: 230/60 °C, 170 °C probing, area mesh, purge, and PA 0.022. Accepts standard or high-flow 0.6 mm nozzles."
+    ? "Device-matched Core One 0.6 / Prusament PLA: 230/60 °C, area mesh, purge, PA 0.022, 0.6 mm travel hop, and 0.8 mm retraction at 45/25 mm/s."
     : "Parameters changed — generate again.";
 });
 $("startg").value=printerDef().start();

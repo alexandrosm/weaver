@@ -17,6 +17,7 @@
  * ========================================================================== */
 const SQ3 = Math.sqrt(3) / 2;
 const FIL_AREA = Math.PI * Math.pow(1.75 / 2, 2);
+const RETRACT_MIN_TRAVEL = 1.5; // Core One profile's retract-before-travel floor
 const CREPE = [
   [1,0,1,1,0,0,1,0],[0,1,1,0,1,0,0,1],[1,1,0,0,1,1,0,0],[0,0,1,1,0,1,1,0],
   [1,0,0,1,1,0,0,1],[0,1,0,1,0,1,1,0],[1,1,0,0,1,0,0,1],[0,0,1,0,0,1,1,1]];
@@ -88,7 +89,8 @@ const PRINTERS={
     end:()=>"M104 S0\nM140 S0\nM107"},
   coreone:{label:"Prusa Core One 0.6 / Prusament PLA",bed:[125,110],
     defaults:{ht:230,bt:60,fan:40,sw:0.65,sh:0.25,nflat:1.0,
-      pitch:4.0,bd:1.2,bh:0.6},
+      pitch:4.0,bd:1.2,bh:0.6,zhop:0.6,retract:0.8,
+      retSpeed:2700,primeSpeed:1500},
     start:coreOneStart,end:coreOneEnd},
 };
 const printerDef=()=>PRINTERS[P.printer]||PRINTERS.generic;
@@ -99,6 +101,7 @@ const P = {
   offd:false, offFrac:0.40, ovs:0.30, plies:1, pgap:0.25, tack:3, edge:true, join:true,
   nflat:0.80, ncone:120,
   ps:2400, bs:3600, ts:9000, pspd:300, pstep:3, pflow:1.10, acc:6000,
+  zhop:0, retract:0, retSpeed:2400, primeSpeed:2400,
   ht:230, bt:100, fan:40, printer:"generic", bed:[110,110], draft:CREPE.map(r=>r.slice())
 };
 const z1=()=>P.sh, zPost=()=>P.bh, z3=()=>P.bh+P.sh;
@@ -231,11 +234,16 @@ const postVol=()=>{
    dashes breaks that invariant; see NOTES § 3. */
 function toolpath(){
   const ds=allDashes(),vol=postVol(),ops=[],segs=[],seq={};
-  const st={dash:0,bridge:0,travel:0,posts:0,nd:0,joins:0,ties:0};
+  const st={dash:0,bridge:0,travel:0,travels:0,retracts:0,
+    posts:0,nd:0,joins:0,ties:0};
   let cur=null;
   const travel=(xy,z)=>{
     if(cur&&Math.abs(cur.p[0]-xy[0])<1e-9&&Math.abs(cur.p[1]-xy[1])<1e-9&&Math.abs(cur.z-z)<1e-9) return;
-    if(cur){st.travel+=dist(cur.p,xy);segs.push({a:cur.p,az:cur.z,b:xy,bz:z,k:"t"});}
+    if(cur){
+      const d=dist(cur.p,xy);st.travel+=d;
+      if(d>1e-9){st.travels++;if(d>=RETRACT_MIN_TRAVEL) st.retracts++;}
+      segs.push({a:cur.p,az:cur.z,b:xy,bz:z,k:"t"});
+    }
     ops.push({o:"T",x:xy[0],y:xy[1],z});cur={p:xy,z};
   };
   const draw=(xy,z,f,k,fam)=>{
@@ -410,8 +418,13 @@ function metrics(tp){
   const cover=Math.min(1,nfam*P.sw/P.pitch)*P.plies;
   const nd=Math.max(1,st.nd);
   const tDash=nd*moveTime((st.dash+st.bridge)/nd,P.ps/60,P.acc);
-  const nT=Math.max(1,st.posts*2);
-  const tTrav=nT*moveTime(st.travel/nT,P.ts/60,P.acc);
+  const nT=Math.max(1,st.travels);
+  const tMove=st.travels?nT*moveTime(st.travel/nT,P.ts/60,P.acc):0;
+  const tHop=st.travels*2*moveTime(Math.max(0,P.zhop),P.ts/60,P.acc);
+  const ret=Math.max(0,P.retract);
+  const tRet=ret&&st.retracts
+    ? st.retracts*ret*(60/P.retSpeed+60/P.primeSpeed):0;
+  const tTrav=tMove+tHop+tRet;
   const tPost=st.posts*((postVol()/FIL_AREA)/(P.pspd/60));
   const tot=tDash+tTrav+tPost;
   return {dashes:ds.length,posts:st.posts,stops:st.posts/area,longest,clear,minPitch,
@@ -423,6 +436,7 @@ function gcode(tp,startG="",endG=""){
   L.push("; Loomwright — printed weave");
   L.push(`; ${P.lattice} / ${P.pattern}  pitch ${P.pitch} mm  ${P.size} mm square  x${P.plies} ply  rot ${P.rot}deg`);
   L.push(`; button ${P.bd} x ${P.bh} mm   strand ${P.sw} x ${P.sh} mm   offset dashes ${P.offd?"on":"off"}`);
+  L.push(`; travel z-hop ${P.zhop} mm   retract ${P.retract} mm @ ${P.retSpeed}/${P.primeSpeed} mm/min`);
   L.push("G21 ; mm","G90 ; absolute moves","M83 ; relative extrusion");
   if(P.printer==="coreone"){
     // Probe only the print area: rotation-aware swatch bbox plus margin.
@@ -437,9 +451,22 @@ function gcode(tp,startG="",endG=""){
   L.push(`M106 S${Math.round(P.fan*2.55)}`);
   let cur=null,lastF=null;
   const nx=v=>v.toFixed(4).replace(/\.?0+$/,"")||"0";
+  const retract=Math.max(0,P.retract),zhop=Math.max(0,P.zhop);
   for(const op of tp.ops){
     if(op.o==="T"){
-      L.push(`G0 F${P.ts} X${nx(op.x+P.bed[0])} Y${nx(op.y+P.bed[1])} Z${nx(op.z)}`);
+      const xyDist=cur?Math.hypot(op.x-cur[0],op.y-cur[1]):0;
+      const xyMove=xyDist>1e-9;
+      const doRet=xyMove&&xyDist>=RETRACT_MIN_TRAVEL&&retract>0;
+      if(doRet) L.push(`G1 F${P.retSpeed} E-${nx(retract)}`);
+      if(cur&&xyMove&&zhop>0){
+        const hopZ=Math.max(cur[2],op.z)+zhop;
+        L.push(`G0 F${P.ts} Z${nx(hopZ)}`);
+        L.push(`G0 X${nx(op.x+P.bed[0])} Y${nx(op.y+P.bed[1])}`);
+        L.push(`G0 Z${nx(op.z)}`);
+      } else {
+        L.push(`G0 F${P.ts} X${nx(op.x+P.bed[0])} Y${nx(op.y+P.bed[1])} Z${nx(op.z)}`);
+      }
+      if(doRet) L.push(`G1 F${P.primeSpeed} E${nx(retract)}`);
       cur=[op.x,op.y,op.z];lastF=null;
     } else if(op.o==="D"){
       const d=cur?Math.hypot(op.x-cur[0],op.y-cur[1],op.z-cur[2]):0;
@@ -567,6 +594,24 @@ function runCheck(log){
   let coreErr=coreAt.some(i=>i<0)
     ? `missing ${coreSeq[coreAt.findIndex(i=>i<0)]}`
     : coreAt.some((v,i)=>i&&v<=coreAt[i-1]) ? "startup/toolpath/shutdown order" : "";
+  if(!coreErr){
+    const lines=coreG.split("\n");
+    const firstTravel=lines.findIndex(l=>l.startsWith(`G0 F${P.ts} X`));
+    const retractLine=`G1 F${P.retSpeed} E-${P.retract}`;
+    const primeLine=`G1 F${P.primeSpeed} E${P.retract}`;
+    const firstRet=lines.indexOf(retractLine);
+    const retracts=lines.filter(l=>l===retractLine).length;
+    const primes=lines.filter(l=>l===primeLine).length;
+    if(firstTravel<0||firstRet<=firstTravel)
+      coreErr="initial positioning was retracted or travel is missing";
+    else if(!retracts||retracts!==primes)
+      coreErr=`unbalanced travel retraction (${retracts} retract / ${primes} prime)`;
+    else if(!lines[firstRet+1].startsWith(`G0 F${P.ts} Z`)||
+            !lines[firstRet+2].startsWith("G0 X")||
+            !lines[firstRet+3].startsWith("G0 Z")||
+            lines[firstRet+4]!==primeLine)
+      coreErr="retract / lift / XY / lower / prime order";
+  }
   if(!coreErr&&(coreM.clear<0.2||coreM.vgap<0.08))
     coreErr=`unsafe profile geometry (clear ${coreM.clear.toFixed(2)}, gap ${coreM.vgap.toFixed(2)})`;
   if(coreErr){bad++;log("  FAIL  Core One PLA profile");log(`        ${coreErr}`);}
@@ -584,8 +629,10 @@ if(typeof window==="undefined"&&typeof process!=="undefined"&&process.argv){
   const NUM={pitch:"pitch",size:"size",rotate:"rot","button-d":"bd","button-h":"bh",
     "strand-w":"sw","strand-h":"sh","offset-frac":"offFrac",overshoot:"ovs",
     plies:"plies","tack-every":"tack","ply-gap":"pgap","print-speed":"ps",
-    "bridge-speed":"bs","travel-speed":"ts","post-speed":"pspd","post-steps":"pstep",
-    "post-flow":"pflow",accel:"acc","nozzle-temp":"ht","bed-temp":"bt",fan:"fan",
+    "bridge-speed":"bs","travel-speed":"ts","z-hop":"zhop",retract:"retract",
+    "retract-speed":"retSpeed","prime-speed":"primeSpeed",
+    "post-speed":"pspd","post-steps":"pstep","post-flow":"pflow",accel:"acc",
+    "nozzle-temp":"ht","bed-temp":"bt",fan:"fan",
     "nozzle-flat":"nflat","nozzle-cone":"ncone"};
   const STR={lattice:"lattice",pattern:"pattern"};
   const usage=`weaver engine — single-source printed-weave generator
@@ -600,8 +647,9 @@ options mirror the app's parameters:
   --ground-edges / --no-ground-edges     bed-anchor boundary high runs (default on)
   --join / --no-join                     selvedge U-turns joining threads at the edge (default on)
   --plies --tack-every --ply-gap
-  --print-speed --bridge-speed --travel-speed --post-speed --post-steps
-  --post-flow --accel --nozzle-temp --bed-temp --fan --nozzle-flat --nozzle-cone
+  --print-speed --bridge-speed --travel-speed --z-hop --retract
+  --retract-speed --prime-speed --post-speed --post-steps --post-flow
+  --accel --nozzle-temp --bed-temp --fan --nozzle-flat --nozzle-cone
   --draft FILE    JSON NxN array of 0/1 (warp over = 1); implies custom
   --config FILE   JSON object of parameters (what the app's Export config saves)
   --printer generic|coreone   bed centre and start/end G-code profile
