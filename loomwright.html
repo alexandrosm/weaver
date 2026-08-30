@@ -589,14 +589,17 @@ function renderFabric(){
   const lwLo=Math.max(1.4,P.sw*S), lwHi=Math.max(1.2,dfree*S);
   const items=[];
   const add=(seg,zk)=>{seg.zk=zk;items.push(seg);};
-  // bridges render straight: that is the commanded path, and actual droop is
-  // unmeasured (NOTES § 5) — the renderer must not invent physics
+  // op z values are nozzle-tip heights; the deposited strand hangs below the
+  // tip, so draw centrelines sh/2 lower — bridges then rest on the button
+  // tops instead of floating a layer above them. Bridges render straight:
+  // actual droop is unmeasured (NOTES § 5).
+  const cz=P.sh/2;
   for(const s of TP.segs){
     if(s.k==="t") continue;
     const zk=(s.az+s.bz)/2;
-    if(s.k==="hi") add(mkSeg(s.a,s.az,s.b,s.bz,"hi",s.fam,lwHi,true),zk);
-    else if(s.k==="p") add(mkSeg(s.a,s.az,s.b,s.bz,"p",undefined,Math.max(1.3,P.bd*0.42*S),false),zk);
-    else add(mkSeg(s.a,s.az,s.b,s.bz,"lo",s.fam,lwLo,s.az>P.bh),zk);
+    if(s.k==="hi") add(mkSeg(s.a,s.az-cz,s.b,s.bz-cz,"hi",s.fam,lwHi,true),zk);
+    else if(s.k==="p") add(mkSeg(s.a,s.az-cz,s.b,s.bz-cz,"p",undefined,Math.max(1.3,P.bd*0.42*S),false),zk);
+    else add(mkSeg(s.a,s.az-cz,s.b,s.bz-cz,"lo",s.fam,lwLo,s.az>P.bh),zk);
   }
   const seen=new Set();
   for(let ply=0;ply<P.plies;ply++){
