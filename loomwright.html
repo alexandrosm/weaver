@@ -606,7 +606,7 @@ function renderFabric(){
       const key=ply+":"+D.L.f+":"+D.L.i+":"+D.pb.toFixed(3);
       if(seen.has(key)) continue; seen.add(key);
       const c=place(postC(D),shift);
-      const ph=D.hi?P.bh+P.sh:P.bh;              // pass-2 posts are taller
+      const ph=P.bh;
       items.push({post:c,dz,ph,zk:dz+ph/2,d:proj(c[0],c[1],dz+ph/2).d});
     }
   }

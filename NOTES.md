@@ -139,7 +139,7 @@ h = 0.2 that is 0.32 mm, not 0.2. Getting this wrong overstates the gap by
 
 The table above is centreline geometry. **Emitted G-code uses nozzle-tip
 coordinates with the tip at the top of each feature**: low dashes at z = *h*,
-pass-1 posts grown to *H*, bridges (and pass-2 posts) at *H* + *h*. An earlier
+every post grown to *H*, bridges at *H* + *h*. An earlier
 version emitted centreline z — half a layer low everywhere — which doubled the
 first-layer squish and made pass-1 posts stand *H* proud of the pass-1 tip
 plane instead of the modelled *H* − *h*. See §7.10.
@@ -224,10 +224,11 @@ a 1.2 mm disc.
 The `overshoot` parameter is the cheap mitigation: pass 2 runs past the post
 centre so the strand lies across the full disc rather than clipping its edge.
 
-The two post kinds also differ in height: pass-1 posts stop at *H*, so the
-landing bridge drapes onto their top from a tip *h* above; pass-2 posts grow
-to *H* + *h*, so the bridge leaves their top level. Overshoot is skipped at
-free thread ends — there is nothing to land on there.
+Both post kinds stop at *H*, matching the z stack in §2.4. The bridge leaves
+its origin post through a short climb — the tip rising *h* over roughly the
+button radius, so the ramp stays local and the span stays level — and lands
+on the far post by draping onto its top from *h* above. Overshoot is skipped
+at free thread ends — there is nothing to land on there.
 
 A "split post" idea — each pass building half — was considered and **does not
 work**. The two halves would have to meet at one z, but the dashes arrive at

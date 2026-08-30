@@ -12,8 +12,8 @@
  * This file is DOM-free by construction and must stay that way.
  *
  * COORDINATE CONVENTION — all z values are nozzle-tip heights with the tip
- * at the TOP of the feature being deposited: low dashes at sh, pass-1 posts
- * grown to bh, bridges and pass-2 posts at bh + sh. See NOTES.md § 2.4.
+ * at the TOP of the feature being deposited: low dashes at sh, every post
+ * grown to bh, bridges at bh + sh. See NOTES.md § 2.4.
  * ========================================================================== */
 const SQ3 = Math.sqrt(3) / 2;
 const FIL_AREA = Math.PI * Math.pow(1.75 / 2, 2);
@@ -129,12 +129,13 @@ const postVol=()=>{
 /* pass 1 (+t) low dashes, each growing the post at its travel end — to the
    button top, so during the rest of pass 1 it stands only (bh - sh) proud of
    the tip plane. pass 2 (-t) high dashes, each growing its own post from the
-   bed at the far end up to bridge height (the bridge leaves level), then
-   bridging back and landing on pass 1's post, whose top sits sh below the
-   tip. Opposite directions is what makes the two passes claim disjoint
-   posts — and what keeps z-low travels out of printed-bridge airspace: the
-   region ahead of the sweep is always unprinted. Reordering dashes breaks
-   that invariant; see NOTES § 3. */
+   bed at the far end to the same button top, climbing onto bridge height
+   over roughly the button radius (so the ramp is local and the span stays
+   level), then bridging back and landing on pass 1's post by draping onto
+   its top from sh above. Opposite directions is what makes the two passes
+   claim disjoint posts — and what keeps z-low travels out of printed-bridge
+   airspace: the region ahead of the sweep is always unprinted. Reordering
+   dashes breaks that invariant; see NOTES § 3. */
 function toolpath(){
   const ds=allDashes(),vol=postVol(),ops=[],segs=[];
   const st={dash:0,bridge:0,travel:0,posts:0,nd:0};
@@ -178,10 +179,20 @@ function toolpath(){
     for(let i=ds.length-1;i>=0;i--){
       const D=ds[i];if(!D.hi) continue;
       const [s0,e0]=dashPts(D),s=put(s0),e=put(e0);
+      let bStart=e;                 // where the level part of the bridge begins
       if(D.post){
         const c=put(postC(D));
         const base=offAmt()>0?[2*c[0]-e[0],2*c[1]-e[1]]:c;
-        travel(base,zl);grow(base,e,zl,zh,tackZ(pi));pi++;
+        travel(base,zl);grow(base,e,zl,zt,tackZ(pi));pi++;
+        // climb out of the post over ~the button radius; a climb spread
+        // across the whole span would hang the mid-bridge low and eat the
+        // vertical gap
+        const span=dist(s,e);
+        if(span>1e-6){
+          const ml=Math.min(P.bd/2,span*0.25);
+          bStart=[e[0]+(s[0]-e[0])/span*ml,e[1]+(s[1]-e[1])/span*ml];
+          draw(bStart,zh,P.bs,"hi",D.L.f);
+        }
       } else travel(e,zh);
       let end=s;
       if(P.ovs>0&&D.postS){
@@ -190,7 +201,7 @@ function toolpath(){
         const L=dist(s,e);
         if(L>1e-6){const ov=P.bd*P.ovs;end=[s[0]+(s[0]-e[0])/L*ov,s[1]+(s[1]-e[1])/L*ov];}
       }
-      draw(end,zh,P.bs,"hi",D.L.f);st.bridge+=dist(e,end);st.nd++;
+      draw(end,zh,P.bs,"hi",D.L.f);st.bridge+=dist(e,bStart)+dist(bStart,end);st.nd++;
     }
   }
   return {ops,segs,st,ds};
