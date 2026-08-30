@@ -692,6 +692,9 @@ outputs (default: --report):
     else if(flag==="draft"){P.draft=loadDraft(a[++i]||die("--draft needs a path"));P.pattern="custom";}
     else if(flag==="config"){
       const cfg=JSON.parse(fs.readFileSync(a[++i]||die("--config needs a path"),"utf8"));
+      const defaults=PRINTERS[cfg.printer]&&PRINTERS[cfg.printer].defaults;
+      if(defaults) for(const k of ["zhop","retract","retSpeed","primeSpeed"])
+        if(!(k in cfg)) P[k]=defaults[k];
       Object.assign(P,cfg);
     }
     else if(flag in NUM){
