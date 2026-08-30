@@ -460,7 +460,11 @@ Everything downstream is conditional on these.
   instead of travelling it, as a half-circle arc bulging outward between
   adjacent free ends (sampled into short straight draws), so each family's
   low skeleton is one continuous thread and the fringe closes into a round
-  woven selvedge. The fold-in order means no neighbouring post exists yet
+  woven selvedge. Corner ties finish the job: at each family transition the
+  new chain's start is tied to the nearest loose chain endpoint, and the
+  final end ties back to the last one — when the corners line up (they do
+  for biaxial), the whole perimeter closes into a loop with no loose ends.
+  The fold-in order means no neighbouring post exists yet
   when an arc is drawn, and the clearance envelope is untouched. O(n) extra
   posts against O(n²) in the field, as predicted.
 - **Pile loops.** An arch springing from two posts and rising above the fabric.

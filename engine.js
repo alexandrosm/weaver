@@ -161,7 +161,7 @@ const postVol=()=>{
    dashes breaks that invariant; see NOTES § 3. */
 function toolpath(){
   const ds=allDashes(),vol=postVol(),ops=[],segs=[],seq={};
-  const st={dash:0,bridge:0,travel:0,posts:0,nd:0,joins:0};
+  const st={dash:0,bridge:0,travel:0,posts:0,nd:0,joins:0,ties:0};
   let cur=null;
   const travel=(xy,z)=>{
     if(cur&&Math.abs(cur.p[0]-xy[0])<1e-9&&Math.abs(cur.p[1]-xy[1])<1e-9&&Math.abs(cur.z-z)<1e-9) return;
@@ -189,6 +189,35 @@ function toolpath(){
     // the top of the ply below so the stack is pinned down (both passes)
     const tackZ=k=>(ply>0&&P.tack>0&&k%P.tack===0)?z3()+plyDz(ply-1):null;
     let prevL=null,prevDir=null;
+    const loose=[];                  // chain endpoints not yet tied to anything
+    // corner tie: gentle outward-bulging arc between two chain endpoints in
+    // a margin corner; ends exactly on the existing strand tip, which sits
+    // at z_low under the tip-top convention, so the joint fuses.
+    const arcTie=(A,B,fam)=>{
+      const mid=[(A[0]+B[0])/2,(A[1]+B[1])/2],c0=put([0,0]);
+      let bx=mid[0]-c0[0],by=mid[1]-c0[1];
+      const bl=Math.hypot(bx,by)||1;bx/=bl;by/=bl;
+      const w=dist(A,B),h=w*0.4;
+      const p1=[A[0]+bx*h,A[1]+by*h],p2=[B[0]+bx*h,B[1]+by*h];
+      const N=Math.max(3,Math.min(8,Math.round(w*1.2/0.6)));
+      let pv=A;
+      for(let k2=1;k2<=N;k2++){
+        const t=k2/N,mt=1-t;
+        const q=[mt*mt*mt*A[0]+3*mt*mt*t*p1[0]+3*mt*t*t*p2[0]+t*t*t*B[0],
+                 mt*mt*mt*A[1]+3*mt*mt*t*p1[1]+3*mt*t*t*p2[1]+t*t*t*B[1]];
+        draw(q,zl,P.ps,"lo",fam);
+        st.dash+=dist(pv,q);pv=q;
+      }
+      st.ties++;
+    };
+    const nearestLoose=p=>{
+      let ni=-1,bd2=2.5*P.pitch;
+      for(let li=0;li<loose.length;li++){
+        const dd=dist(loose[li],p);
+        if(dd<bd2){bd2=dd;ni=li;}
+      }
+      return ni;
+    };
     for(const D of ds){
       if(D.hi) continue;
       const [s0,e0]=dashPts(D),s=put(s0),e=put(e0);
@@ -218,6 +247,16 @@ function toolpath(){
           st.dash+=dist(pv,q);pv=q;
         }
         st.joins++;
+      } else if(P.join&&P.edge&&(!prevL||D.L.f!==prevL.f)){
+        // family transition: the serpentine leaves both families' chain
+        // starts near one corner and both ends near the other, so tie this
+        // chain's start to the nearest loose endpoint when one is in reach
+        if(prevL&&cur) loose.push(cur.p);
+        const ni=nearestLoose(s);
+        if(ni>=0){
+          const a=loose.splice(ni,1)[0];
+          travel(a,zl);arcTie(a,s,D.L.f);
+        } else{travel(s,zl);loose.push(s);}
       } else travel(s,zl);
       draw(e,zl,P.ps,"lo",D.L.f);
       st.dash+=dist(s,e);st.nd++;
@@ -230,6 +269,12 @@ function toolpath(){
         grow(c,ex,zl,zt,tackZ(pi));pi++;
         seq[ply+":"+D.L.f+":"+D.L.i+":"+D.pb.toFixed(3)]=segs.length;
       }
+    }
+    // tie off the final chain end; when the corners line up this closes the
+    // selvedge into a loop with no loose ends at all
+    if(P.join&&P.edge&&cur&&Math.abs(cur.z-zl)<1e-9&&loose.length){
+      const ni=nearestLoose(cur.p);
+      if(ni>=0){const a=loose.splice(ni,1)[0];arcTie(cur.p,a,prevL?prevL.f:0);}
     }
     for(let i=ds.length-1;i>=0;i--){
       const D=ds[i];if(!D.hi) continue;
