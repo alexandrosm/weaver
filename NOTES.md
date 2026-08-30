@@ -457,12 +457,12 @@ Everything downstream is conditional on these.
   puts the "extra transition just inside each edge" on every boundary high
   run — a post at the run's existing end, fed by a ~step/4 low stub on the
   bed. Thread joining then draws the pass-1 inter-line hop on the bed
-  instead of travelling it; the serpentine makes that a ~pitch-long link
-  between adjacent free ends in the margin, so each family's low skeleton is
-  one continuous thread and the fringe closes into a woven edge. The fold-in
-  order means no neighbouring post exists yet when a link is drawn, and the
-  clearance envelope is untouched. O(n) extra posts against O(n²) in the
-  field, as predicted.
+  instead of travelling it, as a half-circle arc bulging outward between
+  adjacent free ends (sampled into short straight draws), so each family's
+  low skeleton is one continuous thread and the fringe closes into a round
+  woven selvedge. The fold-in order means no neighbouring post exists yet
+  when an arc is drawn, and the clearance envelope is untouched. O(n) extra
+  posts against O(n²) in the field, as predicted.
 - **Pile loops.** An arch springing from two posts and rising above the fabric.
   Cheapest route to bulk and softness, doesn't touch the in-plane structure.
   Terry, velvet and corduroy are all this.

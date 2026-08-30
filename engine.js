@@ -188,7 +188,7 @@ function toolpath(){
     // on upper plies a post has no bed under it; every Nth one starts from
     // the top of the ply below so the stack is pinned down (both passes)
     const tackZ=k=>(ply>0&&P.tack>0&&k%P.tack===0)?z3()+plyDz(ply-1):null;
-    let prevL=null;
+    let prevL=null,prevDir=null;
     for(const D of ds){
       if(D.hi) continue;
       const [s0,e0]=dashPts(D),s=put(s0),e=put(e0);
@@ -196,19 +196,34 @@ function toolpath(){
       // ends side by side in the edge margin, so the inter-line hop can be
       // DRAWN on the bed instead of travelled — each family's low skeleton
       // becomes one continuous thread and the fringe closes into a woven
-      // edge. Requires grounding, so every line's pass 1 ends at the
-      // margin; the fold-in order guarantees no neighbouring post exists
-      // yet when the link is drawn.
-      if(P.join&&P.edge&&cur&&prevL&&D.L!==prevL&&D.L.f===prevL.f
+      // edge. The turn is a half-circle Bézier bulging outward (tangent =
+      // the direction the head was travelling when the previous line
+      // finished), sampled into short bed-level draws since the op stream
+      // is straight moves only. Requires grounding, so every line's pass 1
+      // ends at the margin; the fold-in order guarantees no neighbouring
+      // post exists yet when the arc is drawn.
+      if(P.join&&P.edge&&cur&&prevL&&prevDir&&D.L!==prevL&&D.L.f===prevL.f
          &&Math.abs(D.L.i-prevL.i)===1&&Math.abs(cur.z-zl)<1e-9
          &&dist(cur.p,s)<2.5*P.pitch){
-        const Lu=dist(cur.p,s);
-        draw(s,zl,P.ps,"lo",D.L.f);
-        st.dash+=Lu;st.joins++;
+        const A=cur.p,w=dist(A,s),h=w*2/3;         // cubic control ≈ semicircle (4r/3)
+        const p1=[A[0]+prevDir[0]*h,A[1]+prevDir[1]*h];
+        const p2=[s[0]+prevDir[0]*h,s[1]+prevDir[1]*h];
+        const N=Math.max(4,Math.min(12,Math.round(w*1.6/0.6)));
+        let pv=A;
+        for(let k2=1;k2<=N;k2++){
+          const t=k2/N,mt=1-t;
+          const q=[mt*mt*mt*A[0]+3*mt*mt*t*p1[0]+3*mt*t*t*p2[0]+t*t*t*s[0],
+                   mt*mt*mt*A[1]+3*mt*mt*t*p1[1]+3*mt*t*t*p2[1]+t*t*t*s[1]];
+          draw(q,zl,P.ps,"lo",D.L.f);
+          st.dash+=dist(pv,q);pv=q;
+        }
+        st.joins++;
       } else travel(s,zl);
       draw(e,zl,P.ps,"lo",D.L.f);
       st.dash+=dist(s,e);st.nd++;
       prevL=D.L;
+      const dl=dist(s,e);
+      if(dl>1e-9) prevDir=[(e[0]-s[0])/dl,(e[1]-s[1])/dl];
       if(D.post){
         const c=put(postC(D));
         const ex=offAmt()>0?[2*c[0]-e[0],2*c[1]-e[1]]:c;
