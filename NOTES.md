@@ -433,7 +433,9 @@ Everything downstream is conditional on these.
 - Bed temperature × post height as a 2D grid, not one at a time — the two push in
   opposite directions.
 - Bridge speed against sag. High feedrate should keep bridges taut; find where it
-  stops working.
+  stops working. Feed the measured sag coefficient back into the preview's
+  deposition model — the preview deliberately renders bridges straight until
+  there is a number.
 
 ### Phase 2 — mechanisms
 
@@ -535,8 +537,11 @@ bun engine.js --check                                      # invariant suite
 
 The app: UI only, engine loaded via `<script src="engine.js">`; works over
 `file://`, no build step, no dependencies beyond a webfont. Live 3D preview —
-fabric mode renders the predicted physical object with per-family tints,
-shading, cast shadows and bridge droop; toolpath mode shows the commanded
+fabric mode renders the deposited result under a volume-conservation
+deposition model — flat w × h roads on support, round Ø√(4wh/π) strands in
+free air, blob posts with base spread, profile-aware shading, cast shadows —
+with contact-anchored drawing so exaggerated z never opens fake gaps at the
+joints; toolpath mode shows the commanded tip
 path — plus the feasibility map, constraint gauges, an editable lift plan,
 and two outputs: G-code generated in-browser, or a parameter JSON
 (`Export config`) that feeds the CLI and `fcexport.py`.

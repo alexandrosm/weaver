@@ -568,14 +568,15 @@ function renderPath(){
 }
 function drawPost(it,fog){
   const rx=Math.max(1.2,P.bd/2*S), ry=rx*Math.abs(Math.sin(el));
+  const rb=rx*1.16, ryb=ry*1.16;   // volume-conserving base spread onto the dash
   const b=proj(it.post[0],it.post[1],it.dz), t=proj(it.post[0],it.post[1],it.dz+it.ph);
   const l=Math.min(66,FAB.p[2]*fog);
-  const g=cx.createLinearGradient(b.x-rx,0,b.x+rx,0);
+  const g=cx.createLinearGradient(b.x-rb,0,b.x+rb,0);
   g.addColorStop(0,`hsl(${FAB.p[0]} ${FAB.p[1]}% ${(l*0.60).toFixed(1)}%)`);
   g.addColorStop(0.35,`hsl(${FAB.p[0]} ${FAB.p[1]}% ${l.toFixed(1)}%)`);
   g.addColorStop(1,`hsl(${FAB.p[0]} ${FAB.p[1]}% ${(l*0.66).toFixed(1)}%)`);
   cx.beginPath();
-  for(let k=0;k<=10;k++){const a=-Math.PI/2+k/10*Math.PI;cx.lineTo(b.x+rx*Math.sin(a),b.y+ry*Math.cos(a));}
+  for(let k=0;k<=10;k++){const a=-Math.PI/2+k/10*Math.PI;cx.lineTo(b.x+rb*Math.sin(a),b.y+ryb*Math.cos(a));}
   for(let k=10;k>=0;k--){const a=-Math.PI/2+k/10*Math.PI;cx.lineTo(t.x+rx*Math.sin(a),t.y+ry*Math.cos(a));}
   cx.closePath();cx.fillStyle=g;cx.fill();
   cx.beginPath();
@@ -609,8 +610,13 @@ function renderFabric(){
       const key=ply+":"+D.L.f+":"+D.L.i+":"+D.pb.toFixed(3);
       if(seen.has(key)) continue; seen.add(key);
       const c=place(postC(D),shift);
-      const ph=P.bh;
-      items.push({post:c,dz,ph,zk:dz+ph/2,d:proj(c[0],c[1],dz+ph/2).d});
+      // contact anchoring: with exaggerated z the strand's drawn thickness
+      // cannot span the tip-to-top distance, so the barrel is drawn up to
+      // the strand centreline plane (bh + sh/2) and the extension hides
+      // under the bridge resting on it. Physical post top stays bh — the
+      // G-code is untouched by any of this (NOTES §2.4).
+      const ph=P.bh+P.sh/2;
+      items.push({post:c,dz,ph,zk:dz+P.bh/2,d:proj(c[0],c[1],dz+P.bh/2).d});
     }
   }
   // shadow pass: anything airborne casts onto the bed
@@ -646,9 +652,13 @@ function renderFabric(){
     cx.beginPath();cx.moveTo(it.A.x,it.A.y);cx.lineTo(it.B.x,it.B.y);cx.stroke();
     if(hl&&it.lw>2.2&&it.k!=="p"){
       const px=-dy/Ln,py=dx/Ln,sgn=(px*LX+py*LY)<0?1:-1;   // toward the light
-      const off=it.lw*0.18*sgn;
-      cx.strokeStyle=`rgba(255,255,255,${(0.08+0.16*f).toFixed(3)})`;
-      cx.lineWidth=it.lw*0.34;
+      // deposition profile drives the sheen: free-air roads are round
+      // (tight bright specular), supported roads are squished flat
+      // (broad faint sheen) — volume-conservation geometry, NOTES §2.4
+      const round_=it.k==="hi";
+      const off=it.lw*(round_?0.22:0.12)*sgn;
+      cx.strokeStyle=`rgba(255,255,255,${(round_?0.12+0.20*f:0.05+0.09*f).toFixed(3)})`;
+      cx.lineWidth=it.lw*(round_?0.28:0.52);
       cx.beginPath();cx.moveTo(it.A.x+px*off,it.A.y+py*off);
       cx.lineTo(it.B.x+px*off,it.B.y+py*off);cx.stroke();
     }
