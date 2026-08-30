@@ -216,6 +216,10 @@ textarea:focus-visible{outline:2px solid var(--post);outline-offset:1px}
     <details><summary>Lift plan</summary><div class="body">
       <canvas id="draft" height="220"></canvas><p class="note" id="draftnote"></p></div></details>
     <details><summary>Output</summary><div class="body">
+      <div class="seg" id="prsel">
+        <button data-pr="generic" aria-pressed="true">Generic</button>
+        <button data-pr="coreone" aria-pressed="false">Prusa Core One</button>
+      </div>
       <button class="wide go" id="gen">Generate G-code</button>
       <div class="seg" style="margin-top:8px">
         <button id="dl">Download .gcode</button><button id="py">Export config</button>
@@ -231,7 +235,7 @@ textarea:focus-visible{outline:2px solid var(--post);outline-offset:1px}
 </main>
 </div>
 
-<script src="engine.js?v=5"></script>
+<script src="engine.js?v=6"></script>
 <script>
 "use strict";
 /* UI for engine.js, which the script tag above loads first — geometry,
@@ -869,8 +873,21 @@ $("tabs").addEventListener("click",e=>{
   if(b.dataset.tab==="r"){ drawMap(); drawDraft(); }
 });
 
-$("startg").value=DEFAULT_START_G;
-$("endg").value=DEFAULT_END_G;
+$("prsel").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  P.printer=b.dataset.pr;
+  P.bed=printerDef().bed.slice();
+  $("startg").value=printerDef().start();
+  $("endg").value=printerDef().end();
+  document.querySelectorAll("#prsel button").forEach(x=>
+    x.setAttribute("aria-pressed",String(x.dataset.pr===P.printer)));
+  lastG=null;
+  $("outnote").textContent=P.printer==="coreone"
+    ? "Core One profile: model check, area-limited G29, purge. Send over LAN: python print.py file.gcode --host <printer-ip> --key <PrusaLink key> --go"
+    : "Parameters changed — generate again.";
+});
+$("startg").value=printerDef().start();
+$("endg").value=printerDef().end();
 window.addEventListener("resize",()=>{drawMap();drawDraft();fitView();});
 buildControls(); syncControls(); recompute();
 </script>

@@ -21,6 +21,9 @@ Design rationale, constraints, verification status, and roadmap live in
 - Test: `bun engine.js --check` — geometry invariant suite; must pass.
 - Smoke: `bun engine.js --report` and `bun engine.js --gcode out.gcode`.
 
+- Print: `bun engine.js --printer coreone --gcode s.gcode` then
+  `python print.py s.gcode --host <printer> --key <PrusaLink key> --go`.
+
 ## Code Style
 
 - `engine.js` stays DOM-free and dual-runtime (browser + bun/node); UI code

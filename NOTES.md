@@ -569,6 +569,20 @@ python fcexport.py loomwright_config.json --out swatch
 python fcexport.py --out tri -- --lattice triaxial --pitch 6.8
 ```
 
+### `print.py`
+
+PrusaLink uploader for Buddy printers (Core One, MK4, XL): PUT to
+`/api/v1/files/<storage>/<name>` with X-Api-Key (digest fallback, user
+"maker"), optional print-after-upload. The engine's `coreone` printer
+profile emits the matching Buddy start sequence — model check, G28,
+area-limited G29 via an M555 computed from the actual swatch bbox, purge
+line — and centres the swatch on the Core One bed (125, 110).
+
+```bash
+bun engine.js --printer coreone --gcode swatch.gcode
+python print.py swatch.gcode --host <printer-ip> --key <key> --go
+```
+
 ### Where to extend
 
 - **A new weave** is one function returning a boolean in `liftRule`, plus a

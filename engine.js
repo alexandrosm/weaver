@@ -20,8 +20,29 @@ const FIL_AREA = Math.PI * Math.pow(1.75 / 2, 2);
 const CREPE = [
   [1,0,1,1,0,0,1,0],[0,1,1,0,1,0,0,1],[1,1,0,0,1,1,0,0],[0,0,1,1,0,1,1,0],
   [1,0,0,1,1,0,0,1],[0,1,0,1,0,1,1,0],[1,1,0,0,1,0,0,1],[0,0,1,0,0,1,1,1]];
-const DEFAULT_START_G = "G28 ; home\nG92 E0";
-const DEFAULT_END_G = "M104 S0\nM140 S0\nM107";
+/* printer profiles: bed centre plus start/end G-code. Core One (Buddy
+   firmware) needs mesh bed leveling for this object's first layer; M555 is
+   emitted automatically by gcode() so the probe area always matches the
+   swatch. Auth-sensitive checks stay minimal: model check only. */
+const PRINTERS={
+  generic:{label:"Generic",bed:[110,110],
+    start:()=>"G28 ; home\nG92 E0",
+    end:()=>"M104 S0\nM140 S0\nM107"},
+  coreone:{label:"Prusa Core One",bed:[125,110],
+    start:()=>['M862.3 P "COREONE" ; printer model check',
+      "G28 ; home",
+      "G29 ; mesh bed level (area from M555 above)",
+      "G1 Z0.3 F720",
+      "G1 X10 Y2 F6000",
+      "G1 X150 Y2 E12 F600 ; purge line",
+      "G1 X152 Y2 F600",
+      "G92 E0"].join("\n"),
+    end:()=>["M104 S0","M140 S0","M107",
+      "G1 Z30 F720 ; lift",
+      "G1 X10 Y200 F6000 ; present",
+      "M84 ; motors off"].join("\n")},
+};
+const printerDef=()=>PRINTERS[P.printer]||PRINTERS.generic;
 
 const P = {
   lattice:"biaxial", pattern:"twill", pitch:3.6, size:30, rot:45,
@@ -29,7 +50,7 @@ const P = {
   offd:false, offFrac:0.40, ovs:0.30, plies:1, pgap:0.25, tack:3, edge:true, join:true,
   nflat:0.80, ncone:120,
   ps:2400, bs:3600, ts:9000, pspd:300, pstep:3, pflow:1.10, acc:6000,
-  ht:230, bt:100, fan:40, bed:[110,110], draft:CREPE.map(r=>r.slice())
+  ht:230, bt:100, fan:40, printer:"generic", bed:[110,110], draft:CREPE.map(r=>r.slice())
 };
 const z1=()=>P.sh, zPost=()=>P.bh, z3=()=>P.bh+P.sh;
 const offAmt=()=>P.offd?P.bd*P.offFrac:0;
@@ -356,6 +377,13 @@ function gcode(tp,startG="",endG=""){
   L.push("G21 ; mm","G90 ; absolute moves","M83 ; relative extrusion");
   L.push(`M140 S${P.bt}`,`M104 S${P.ht}`,`M190 S${P.bt}`,`M109 S${P.ht}`,
          `M106 S${Math.round(P.fan*2.55)}`);
+  if(P.printer==="coreone"){
+    // probe only the print area: swatch bbox (rotation-aware) + margin
+    const a=P.rot*Math.PI/180;
+    const hx=P.size/2*(Math.abs(Math.cos(a))+Math.abs(Math.sin(a)))+2*P.pitch;
+    L.push(`M555 X${Math.max(0,P.bed[0]-hx).toFixed(1)} Y${Math.max(0,P.bed[1]-hx).toFixed(1)}`+
+           ` W${(2*hx).toFixed(1)} H${(2*hx).toFixed(1)} ; probe just the print area`);
+  }
   if(startG) L.push(...startG.split("\n"));
   let cur=null,lastF=null;
   const nx=v=>v.toFixed(4).replace(/\.?0+$/,"")||"0";
@@ -511,6 +539,7 @@ options mirror the app's parameters:
   --post-flow --accel --nozzle-temp --bed-temp --fan --nozzle-flat --nozzle-cone
   --draft FILE    JSON NxN array of 0/1 (warp over = 1); implies custom
   --config FILE   JSON object of parameters (what the app's Export config saves)
+  --printer generic|coreone   bed centre and start/end G-code profile
 
 outputs (default: --report):
   --report        feasibility report to stdout
@@ -542,6 +571,11 @@ outputs (default: --report):
     else if(flag==="no-ground-edges") P.edge=false;
     else if(flag==="join") P.join=true;
     else if(flag==="no-join") P.join=false;
+    else if(flag==="printer"){
+      const v=a[++i];
+      if(!PRINTERS[v]) die(`unknown printer ${v} (${Object.keys(PRINTERS).join(", ")})`);
+      P.printer=v;P.bed=PRINTERS[v].bed.slice();
+    }
     else if(flag==="draft"){P.draft=loadDraft(a[++i]||die("--draft needs a path"));P.pattern="custom";}
     else if(flag==="config"){
       const cfg=JSON.parse(fs.readFileSync(a[++i]||die("--config needs a path"),"utf8"));
@@ -561,7 +595,7 @@ outputs (default: --report):
   if(want.json)
     console.log(JSON.stringify({params:P,metrics:namedMetrics(m)},null,2));
   if(want.gcode){
-    fs.writeFileSync(want.gcode,gcode(tp,DEFAULT_START_G,DEFAULT_END_G));
+    fs.writeFileSync(want.gcode,gcode(tp,printerDef().start(),printerDef().end()));
     console.error(`  wrote ${want.gcode}  (${tp.ops.length} ops)`);
   }
   if(want.ops){
