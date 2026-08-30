@@ -20,27 +20,76 @@ const FIL_AREA = Math.PI * Math.pow(1.75 / 2, 2);
 const CREPE = [
   [1,0,1,1,0,0,1,0],[0,1,1,0,1,0,0,1],[1,1,0,0,1,1,0,0],[0,0,1,1,0,1,1,0],
   [1,0,0,1,1,0,0,1],[0,1,0,1,0,1,1,0],[1,1,0,0,1,0,0,1],[0,0,1,0,0,1,1,1]];
-/* printer profiles: bed centre plus start/end G-code. Core One (Buddy
-   firmware) needs mesh bed leveling for this object's first layer; M555 is
-   emitted automatically by gcode() so the probe area always matches the
-   swatch. Auth-sensitive checks stay minimal: model check only. */
+/* Core One profile resolved from the printer's device-authoritative 0.6 mm
+   nozzle report and PrusaSlicer 2.9.5's matching standard/HF 0.6 mm
+   Prusament PLA presets. M555 uses the rotation-aware swatch bbox. */
+function coreOneStart(){
+  const meshTemp=Math.min(P.ht,170);
+  return [
+    "M17 ; enable steppers",
+    "M862.1 P0.6 ; 0.6 mm nozzle check (standard or high-flow)",
+    'M862.3 P "COREONE" ; printer model check',
+    "M862.5 P2 ; G-code level check",
+    'M862.6 P"Input shaper" ; firmware feature check',
+    "M115 U6.5.7+12836 ; firmware version check",
+    "G90 ; absolute coordinates",
+    "M83 ; relative extrusion",
+    `M140 S${P.bt} ; set bed temperature`,
+    `M109 R${meshTemp} ; wait for probing temperature`,
+    "M84 E ; release extruder motor for probing",
+    "G28 ; home without mesh bed leveling",
+    "M141 S20 ; PLA chamber target",
+    ...(P.bt<=60?["M106 S70 ; assist bed cooling before probing"]:[]),
+    "G0 Z40 F10000",
+    `M104 T0 S${meshTemp}`,
+    `M190 S${P.bt} ; wait for bed temperature`,
+    "M107",
+    "G29 G ; absorb bed heat",
+    `M109 T0 R${meshTemp} ; restore probing temperature`,
+    "M302 S155 ; permit purge preparation",
+    "G1 E-2 F2400 ; retract before nozzle cleaning",
+    "M84 E",
+    "G29 P9 X208 Y-2.5 W32 H4 ; clean nozzle",
+    "M84 E",
+    "G29 P1 ; invalidate mesh and probe print area",
+    "G29 P1 X150 Y0 W100 H20 C ; probe purge area",
+    "G29 P3.2 ; interpolate mesh",
+    "G29 P3.13 ; extrapolate mesh",
+    "G29 A ; activate mesh",
+    `M104 S${P.ht}`,
+    "G0 X249 Y-2.5 Z15 F4800 ; prepare purge",
+    `M109 S${P.ht} ; wait for first-layer temperature`,
+    "G92 E0",
+    "M569 S0 E ; extruder spreadCycle",
+    "M591 S0 ; disable stuck-filament detection during purge",
+    "G1 E2 F2400 ; undo preparation retraction",
+    "G0 E5 X235 Z0.2 F500 ; purge",
+    "G0 X225 E4 F500 ; purge",
+    "G0 X215 E4 F650 ; purge",
+    "G0 X205 E4 F800 ; purge",
+    "G0 X202 Z0.05 F8000 ; wipe near bed",
+    "G0 X199 Z0.2 F8000 ; wipe away",
+    "M591 R ; restore stuck-filament detection",
+    "G92 E0",
+    "M221 S100 ; reset flow",
+    "M572 S0.022 ; Prusament PLA 0.6 pressure advance",
+    "M142 S36 ; heatbreak target"
+  ].join("\n");
+}
+function coreOneEnd(){
+  return ["G1 Z5 F720 ; lift above swatch","M104 S0","M140 S0",
+    "M141 S0 ; disable chamber control","M107",
+    "G1 X242 Y211 F10200 ; park","G4","M572 S0 ; reset pressure advance",
+    "M84 X Y E ; disable motors"].join("\n");
+}
 const PRINTERS={
   generic:{label:"Generic",bed:[110,110],
     start:()=>"G28 ; home\nG92 E0",
     end:()=>"M104 S0\nM140 S0\nM107"},
-  coreone:{label:"Prusa Core One",bed:[125,110],
-    start:()=>['M862.3 P "COREONE" ; printer model check',
-      "G28 ; home",
-      "G29 ; mesh bed level (area from M555 above)",
-      "G1 Z0.3 F720",
-      "G1 X10 Y2 F6000",
-      "G1 X150 Y2 E12 F600 ; purge line",
-      "G1 X152 Y2 F600",
-      "G92 E0"].join("\n"),
-    end:()=>["M104 S0","M140 S0","M107",
-      "G1 Z30 F720 ; lift",
-      "G1 X10 Y200 F6000 ; present",
-      "M84 ; motors off"].join("\n")},
+  coreone:{label:"Prusa Core One 0.6 / Prusament PLA",bed:[125,110],
+    defaults:{ht:230,bt:60,fan:40,sw:0.65,sh:0.25,nflat:1.0,
+      pitch:4.0,bd:1.2,bh:0.6},
+    start:coreOneStart,end:coreOneEnd},
 };
 const printerDef=()=>PRINTERS[P.printer]||PRINTERS.generic;
 
@@ -375,16 +424,17 @@ function gcode(tp,startG="",endG=""){
   L.push(`; ${P.lattice} / ${P.pattern}  pitch ${P.pitch} mm  ${P.size} mm square  x${P.plies} ply  rot ${P.rot}deg`);
   L.push(`; button ${P.bd} x ${P.bh} mm   strand ${P.sw} x ${P.sh} mm   offset dashes ${P.offd?"on":"off"}`);
   L.push("G21 ; mm","G90 ; absolute moves","M83 ; relative extrusion");
-  L.push(`M140 S${P.bt}`,`M104 S${P.ht}`,`M190 S${P.bt}`,`M109 S${P.ht}`,
-         `M106 S${Math.round(P.fan*2.55)}`);
   if(P.printer==="coreone"){
-    // probe only the print area: swatch bbox (rotation-aware) + margin
+    // Probe only the print area: rotation-aware swatch bbox plus margin.
     const a=P.rot*Math.PI/180;
     const hx=P.size/2*(Math.abs(Math.cos(a))+Math.abs(Math.sin(a)))+2*P.pitch;
     L.push(`M555 X${Math.max(0,P.bed[0]-hx).toFixed(1)} Y${Math.max(0,P.bed[1]-hx).toFixed(1)}`+
            ` W${(2*hx).toFixed(1)} H${(2*hx).toFixed(1)} ; probe just the print area`);
+  } else {
+    L.push(`M140 S${P.bt}`,`M104 S${P.ht}`,`M190 S${P.bt}`,`M109 S${P.ht}`);
   }
   if(startG) L.push(...startG.split("\n"));
+  L.push(`M106 S${Math.round(P.fan*2.55)}`);
   let cur=null,lastF=null;
   const nx=v=>v.toFixed(4).replace(/\.?0+$/,"")||"0";
   for(const op of tp.ops){
@@ -506,8 +556,23 @@ function runCheck(log){
     if(errs.length){bad++;log(`  FAIL  ${name}`);errs.slice(0,4).forEach(e=>log(`        ${e}`));}
     else log(`  ok    ${name}  (${tp.ops.length} ops, ${m.posts} posts)`);
   }
+  Object.assign(P,base,PRINTERS.coreone.defaults,
+    {printer:"coreone",bed:[125,110],pattern:"plain"});
+  const coreTp=toolpath(),coreM=metrics(coreTp);
+  const coreG=gcode(coreTp,printerDef().start(),printerDef().end());
+  const coreSeq=["M555 X","M862.1 P0.6","M109 R170","G28 ",
+    "G29 P1 ;","M109 S230","M572 S0.022","M106 S102",`G0 F${P.ts}`,
+    "M104 S0","G1 X242 Y211","M572 S0 ;"];
+  const coreAt=coreSeq.map(s=>coreG.indexOf(s));
+  let coreErr=coreAt.some(i=>i<0)
+    ? `missing ${coreSeq[coreAt.findIndex(i=>i<0)]}`
+    : coreAt.some((v,i)=>i&&v<=coreAt[i-1]) ? "startup/toolpath/shutdown order" : "";
+  if(!coreErr&&(coreM.clear<0.2||coreM.vgap<0.08))
+    coreErr=`unsafe profile geometry (clear ${coreM.clear.toFixed(2)}, gap ${coreM.vgap.toFixed(2)})`;
+  if(coreErr){bad++;log("  FAIL  Core One PLA profile");log(`        ${coreErr}`);}
+  else log("  ok    Core One PLA profile");
   Object.assign(P,base);
-  log(`\n  ${cases.length-bad}/${cases.length} configurations pass`);
+  log(`\n  ${cases.length+1-bad}/${cases.length+1} configurations pass`);
   return bad===0;
 }
 
@@ -574,7 +639,7 @@ outputs (default: --report):
     else if(flag==="printer"){
       const v=a[++i];
       if(!PRINTERS[v]) die(`unknown printer ${v} (${Object.keys(PRINTERS).join(", ")})`);
-      P.printer=v;P.bed=PRINTERS[v].bed.slice();
+      P.printer=v;P.bed=PRINTERS[v].bed.slice();Object.assign(P,PRINTERS[v].defaults||{});
     }
     else if(flag==="draft"){P.draft=loadDraft(a[++i]||die("--draft needs a path"));P.pattern="custom";}
     else if(flag==="config"){
