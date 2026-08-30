@@ -26,7 +26,7 @@ const DEFAULT_END_G = "M104 S0\nM140 S0\nM107";
 const P = {
   lattice:"biaxial", pattern:"twill", pitch:3.6, size:30, rot:45,
   bd:0.9, bh:0.45, sw:0.40, sh:0.20,
-  offd:true, offFrac:0.40, ovs:0.30, plies:1, pgap:0.25, tack:3,
+  offd:false, offFrac:0.40, ovs:0.30, plies:1, pgap:0.25, tack:3,
   nflat:0.80, ncone:120,
   ps:2400, bs:3600, ts:9000, pspd:300, pstep:3, pflow:1.10, acc:6000,
   ht:230, bt:100, fan:40, bed:[110,110], draft:CREPE.map(r=>r.slice())

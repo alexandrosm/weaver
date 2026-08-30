@@ -588,26 +588,15 @@ function renderFabric(){
   const dfree=Math.sqrt(4*P.sw*P.sh/Math.PI);
   const lwLo=Math.max(1.4,P.sw*S), lwHi=Math.max(1.2,dfree*S);
   const items=[];
+  const add=(seg,zk)=>{seg.zk=zk;items.push(seg);};
+  // bridges render straight: that is the commanded path, and actual droop is
+  // unmeasured (NOTES § 5) — the renderer must not invent physics
   for(const s of TP.segs){
     if(s.k==="t") continue;
-    if(s.k==="hi"){
-      // cosmetic droop so long floats read as bridges, not rigid bars
-      const span=Math.hypot(s.b[0]-s.a[0],s.b[1]-s.a[1]);
-      const sag=Math.min(0.22,0.010*span*span);
-      const N=sag>0.012?6:1;
-      for(let i=0;i<N;i++){
-        const t0=i/N,t1=(i+1)/N;
-        const p0=[s.a[0]+(s.b[0]-s.a[0])*t0,s.a[1]+(s.b[1]-s.a[1])*t0];
-        const p1=[s.a[0]+(s.b[0]-s.a[0])*t1,s.a[1]+(s.b[1]-s.a[1])*t1];
-        const q0=s.az+(s.bz-s.az)*t0-sag*4*t0*(1-t0);
-        const q1=s.az+(s.bz-s.az)*t1-sag*4*t1*(1-t1);
-        items.push(mkSeg(p0,q0,p1,q1,"hi",s.fam,lwHi,true));
-      }
-    } else if(s.k==="p"){
-      items.push(mkSeg(s.a,s.az,s.b,s.bz,"p",undefined,Math.max(1.3,P.bd*0.42*S),false));
-    } else {
-      items.push(mkSeg(s.a,s.az,s.b,s.bz,"lo",s.fam,lwLo,s.az>P.bh));
-    }
+    const zk=(s.az+s.bz)/2;
+    if(s.k==="hi") add(mkSeg(s.a,s.az,s.b,s.bz,"hi",s.fam,lwHi,true),zk);
+    else if(s.k==="p") add(mkSeg(s.a,s.az,s.b,s.bz,"p",undefined,Math.max(1.3,P.bd*0.42*S),false),zk);
+    else add(mkSeg(s.a,s.az,s.b,s.bz,"lo",s.fam,lwLo,s.az>P.bh),zk);
   }
   const seen=new Set();
   for(let ply=0;ply<P.plies;ply++){
@@ -618,7 +607,7 @@ function renderFabric(){
       if(seen.has(key)) continue; seen.add(key);
       const c=place(postC(D),shift);
       const ph=D.hi?P.bh+P.sh:P.bh;              // pass-2 posts are taller
-      items.push({post:c,dz,ph,d:proj(c[0],c[1],dz+ph/2).d});
+      items.push({post:c,dz,ph,zk:dz+ph/2,d:proj(c[0],c[1],dz+ph/2).d});
     }
   }
   // shadow pass: anything airborne casts onto the bed
@@ -635,7 +624,11 @@ function renderFabric(){
       cx.beginPath();cx.moveTo(A.x,A.y);cx.lineTo(B.x,B.y);cx.stroke();
     }
   }
-  items.sort((a,b)=>a.d-b.d);
+  // painter order: physical z-band first (lows → posts → bridges → next ply),
+  // view depth only within a band — plain view-depth midpoint sorting lets
+  // plan position swamp the sub-millimetre z structure, so over/under at
+  // crossings would flip as you orbit
+  items.sort((a,b)=>(a.zk-b.zk)||(a.d-b.d));
   const n=items.length, hl=n<9000;
   for(let i=0;i<n;i++){
     const it=items[i], fog=0.86+0.2*(n>1?i/(n-1):1);
@@ -798,7 +791,7 @@ $("py").addEventListener("click",()=>{
 });
 
 const PRESETS={
-  "Validated":{lattice:"biaxial",pattern:"twill",pitch:3.6,bd:0.9,bh:0.45,offd:true,plies:1,size:30},
+  "Validated":{lattice:"biaxial",pattern:"twill",pitch:3.6,bd:0.9,bh:0.45,offd:false,plies:1,size:30},
   "Dense":{lattice:"biaxial",pattern:"plain",pitch:2.6,bd:0.7,bh:0.35,offd:false,plies:1,size:26},
   "Stretch":{lattice:"biaxial",pattern:"plain",pitch:3.8,bd:1.8,bh:0.5,offd:true,plies:1,size:30},
   "Triaxial":{lattice:"triaxial",pattern:"twill",pitch:6.8,bd:0.9,bh:0.45,offd:false,plies:1,size:34},
