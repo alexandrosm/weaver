@@ -101,6 +101,11 @@ input[type=range]{width:100%;accent-color:var(--warp);height:14px;display:block}
 .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
 .hint{position:absolute;right:13px;bottom:11px;font:400 10.5px/1 var(--mono);
   color:var(--faint);pointer-events:none}
+.ordbar{position:absolute;left:13px;right:13px;bottom:34px;display:flex;
+  align-items:center;gap:10px;pointer-events:none}
+.ordbar input[type=range]{flex:1;pointer-events:auto;accent-color:var(--post);height:14px}
+.ordbar output{font:400 11px/1 var(--mono);color:var(--dim);min-width:96px;text-align:right;
+  background:rgba(8,25,44,.65);padding:3px 7px;border-radius:3px}
 
 /* ---------- feasibility map ---------- */
 .mapwrap{position:relative;margin-bottom:6px}
@@ -186,13 +191,16 @@ textarea:focus-visible{outline:2px solid var(--post);outline-offset:1px}
       </div>
       <label class="mini">Z<input type="range" id="zx" min="1" max="10" step="1" value="3"><output id="zx_o">3×</output></label>
       <label class="mini">Shear<input type="range" id="shear" min="-30" max="30" step="1" value="0"><output id="shear_o">0°</output></label>
-      <label class="mini">Order<input type="range" id="ord" min="0" max="1" step="1" value="1"><output id="ord_o">all</output></label>
       <span class="sp" id="counts"></span>
     </div>
     <div class="plate">
       <canvas id="view" tabindex="0" aria-label="Fabric preview, arrow keys orbit"></canvas>
       <div class="legend" id="lgd"></div>
       <div class="hint">drag or arrows to orbit · scroll to zoom</div>
+      <div class="ordbar">
+        <input type="range" id="ord" min="0" max="1" step="1" value="1" aria-label="Print order scrub">
+        <output id="ord_o">complete</output>
+      </div>
     </div>
   </section>
 
@@ -223,7 +231,7 @@ textarea:focus-visible{outline:2px solid var(--post);outline-offset:1px}
 </main>
 </div>
 
-<script src="engine.js"></script>
+<script src="engine.js?v=2"></script>
 <script>
 "use strict";
 /* UI for engine.js, which the script tag above loads first — geometry,
@@ -615,7 +623,7 @@ function renderFabric(){
       if(!D.post) continue;
       const key=ply+":"+D.L.f+":"+D.L.i+":"+D.pb.toFixed(3);
       if(seen.has(key)) continue; seen.add(key);
-      if(showN>=0&&(TP.seq[key]??0)>showN) continue;   // post not built yet here
+      if(showN>=0&&((TP.seq?.[key])??0)>showN) continue;   // post not built yet here
       const c=place(postC(D),shift);
       // contact anchoring: with exaggerated z the strand's drawn thickness
       // cannot span the tip-to-top distance, so the barrel is drawn up to
@@ -675,11 +683,11 @@ function drawScaleBar(){
   const px=10*S;
   if(px>18&&px<W*0.6){
     cx.strokeStyle="rgba(155,178,203,.6)";cx.lineWidth=1;
-    cx.beginPath();cx.moveTo(14,H-34);cx.lineTo(14+px,H-34);
-    cx.moveTo(14,H-38);cx.lineTo(14,H-30);cx.moveTo(14+px,H-38);cx.lineTo(14+px,H-30);
+    cx.beginPath();cx.moveTo(14,H-62);cx.lineTo(14+px,H-62);
+    cx.moveTo(14,H-66);cx.lineTo(14,H-58);cx.moveTo(14+px,H-66);cx.lineTo(14+px,H-58);
     cx.stroke();
     cx.fillStyle="rgba(155,178,203,.7)";cx.font='10px "IBM Plex Mono"';cx.textAlign="left";
-    cx.fillText("10 mm",14,H-42);
+    cx.fillText("10 mm",14,H-70);
   }
 }
 function render(){
@@ -746,7 +754,7 @@ function doRecompute(full){
     TP=toolpath();
     showN=-1;                      // parameters changed: show the finished object
     const o=$("ord");o.max=TP.segs.length;o.value=TP.segs.length;
-    $("ord_o").textContent="all";
+    $("ord_o").textContent="complete";
   }
   const m=metrics(TP);
   CONST=mapConst(m);
@@ -778,7 +786,7 @@ $("shear").addEventListener("input",e=>{shear=+e.target.value;$("shear_o").textC
 $("ord").addEventListener("input",e=>{
   const v=+e.target.value,max=+e.target.max;
   showN=v>=max?-1:v;
-  $("ord_o").textContent=showN<0?"all":Math.round(100*v/Math.max(1,max))+"%";
+  $("ord_o").textContent=showN<0?"complete":`${v} / ${max}`;
   render();
 });
 let drag=false,lx=0,ly=0;

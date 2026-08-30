@@ -29,6 +29,9 @@ Design rationale, constraints, verification status, and roadmap live in
   (NOTES §2.4). Do not reintroduce centreline z.
 - Dash ordering is load-bearing (reverse-sweep z-safety, NOTES §3); do not
   reorder passes without reading it.
+- `loomwright.html` loads the engine as `engine.js?v=N`; bump `N` in the same
+  commit as any `engine.js` change, or cached HTML can pair with a stale
+  engine and break at runtime.
 
 ## Security Notes
 
