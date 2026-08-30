@@ -186,6 +186,7 @@ textarea:focus-visible{outline:2px solid var(--post);outline-offset:1px}
       </div>
       <label class="mini">Z<input type="range" id="zx" min="1" max="10" step="1" value="3"><output id="zx_o">3×</output></label>
       <label class="mini">Shear<input type="range" id="shear" min="-30" max="30" step="1" value="0"><output id="shear_o">0°</output></label>
+      <label class="mini">Order<input type="range" id="ord" min="0" max="1" step="1" value="1"><output id="ord_o">all</output></label>
       <span class="sp" id="counts"></span>
     </div>
     <div class="plate">
@@ -554,7 +555,9 @@ function mkSeg(a,az_,b,bz,k,fam,lw,shadow){
 }
 function renderPath(){
   const items=[];
-  for(const s of TP.segs){
+  const N=showN<0?TP.segs.length:showN;
+  for(let i2=0;i2<N;i2++){
+    const s=TP.segs[i2];
     const A=proj(s.a[0],s.a[1],s.az), B=proj(s.b[0],s.b[1],s.bz);
     items.push({A,B,d:(A.d+B.d)/2,k:s.k});
   }
@@ -596,7 +599,9 @@ function renderFabric(){
   // tops instead of floating a layer above them. Bridges render straight:
   // actual droop is unmeasured (NOTES § 5).
   const cz=P.sh/2;
-  for(const s of TP.segs){
+  const N=showN<0?TP.segs.length:showN;
+  for(let i2=0;i2<N;i2++){
+    const s=TP.segs[i2];
     if(s.k==="t") continue;
     const zk=(s.az+s.bz)/2;
     if(s.k==="hi") add(mkSeg(s.a,s.az-cz,s.b,s.bz-cz,"hi",s.fam,lwHi,true),zk);
@@ -610,6 +615,7 @@ function renderFabric(){
       if(!D.post) continue;
       const key=ply+":"+D.L.f+":"+D.L.i+":"+D.pb.toFixed(3);
       if(seen.has(key)) continue; seen.add(key);
+      if(showN>=0&&(TP.seq[key]??0)>showN) continue;   // post not built yet here
       const c=place(postC(D),shift);
       // contact anchoring: with exaggerated z the strand's drawn thickness
       // cannot span the tip-to-top distance, so the barrel is drawn up to
@@ -682,6 +688,14 @@ function render(){
   drawOutline();
   if(vmode==="path") renderPath(); else renderFabric();
   drawScaleBar();
+  if(showN>0&&TP.segs.length){
+    // the nozzle at the scrub point (tip coordinates — it is the machine)
+    const sN=TP.segs[Math.min(showN,TP.segs.length)-1];
+    const hp=proj(sN.b[0],sN.b[1],sN.bz);
+    cx.strokeStyle="#fff";cx.lineWidth=1.5;
+    cx.beginPath();cx.arc(hp.x,hp.y,5,0,6.2832);cx.stroke();
+    cx.beginPath();cx.arc(hp.x,hp.y,1.5,0,6.2832);cx.fillStyle="#fff";cx.fill();
+  }
 }
 
 /* ==================================================================
@@ -726,9 +740,14 @@ dc.addEventListener("click",ev=>{
 /* ==================================================================
  * wiring
  * ================================================================== */
-let lastG=null, rafId=0, rafFull=false;
+let lastG=null, rafId=0, rafFull=false, showN=-1;
 function doRecompute(full){
-  if(full||!TP) TP=toolpath();
+  if(full||!TP){
+    TP=toolpath();
+    showN=-1;                      // parameters changed: show the finished object
+    const o=$("ord");o.max=TP.segs.length;o.value=TP.segs.length;
+    $("ord_o").textContent="all";
+  }
   const m=metrics(TP);
   CONST=mapConst(m);
   drawMap(); paint(m);
@@ -756,6 +775,12 @@ $("vpre").addEventListener("click",e=>{
 });
 $("zx").addEventListener("input",e=>{zx=+e.target.value;$("zx_o").textContent=zx+"×";render();});
 $("shear").addEventListener("input",e=>{shear=+e.target.value;$("shear_o").textContent=shear+"°";render();});
+$("ord").addEventListener("input",e=>{
+  const v=+e.target.value,max=+e.target.max;
+  showN=v>=max?-1:v;
+  $("ord_o").textContent=showN<0?"all":Math.round(100*v/Math.max(1,max))+"%";
+  render();
+});
 let drag=false,lx=0,ly=0;
 const dn=e=>{drag=true;const t=e.touches?e.touches[0]:e;lx=t.clientX;ly=t.clientY;};
 const mv=e=>{

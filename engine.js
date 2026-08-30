@@ -160,7 +160,7 @@ const postVol=()=>{
    airspace: the region ahead of the sweep is always unprinted. Reordering
    dashes breaks that invariant; see NOTES § 3. */
 function toolpath(){
-  const ds=allDashes(),vol=postVol(),ops=[],segs=[];
+  const ds=allDashes(),vol=postVol(),ops=[],segs=[],seq={};
   const st={dash:0,bridge:0,travel:0,posts:0,nd:0};
   let cur=null;
   const travel=(xy,z)=>{
@@ -197,6 +197,7 @@ function toolpath(){
         const c=put(postC(D));
         const ex=offAmt()>0?[2*c[0]-e[0],2*c[1]-e[1]]:c;
         grow(c,ex,zl,zt,tackZ(pi));pi++;
+        seq[ply+":"+D.L.f+":"+D.L.i+":"+D.pb.toFixed(3)]=segs.length;
       }
     }
     for(let i=ds.length-1;i>=0;i--){
@@ -206,7 +207,8 @@ function toolpath(){
       if(D.post){
         const c=put(postC(D));
         const base=offAmt()>0?[2*c[0]-e[0],2*c[1]-e[1]]:c;
-        travel(base,zl);grow(base,e,zl,zt,tackZ(pi));pi++;
+        travel(base,zl);grow(base,e,zl,zh,tackZ(pi));pi++;
+        seq[ply+":"+D.L.f+":"+D.L.i+":"+D.pb.toFixed(3)]=segs.length;
         // climb out of the post over ~the button radius; a climb spread
         // across the whole span would hang the mid-bridge low and eat the
         // vertical gap
@@ -227,7 +229,7 @@ function toolpath(){
       draw(end,zh,P.bs,"hi",D.L.f);st.bridge+=dist(e,bStart)+dist(bStart,end);st.nd++;
     }
   }
-  return {ops,segs,st,ds};
+  return {ops,segs,st,ds,seq};   // seq: post build order, for the print-order scrubber
 }
 const moveTime=(L,v,a)=>{
   if(L<=0) return 0;
