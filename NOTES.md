@@ -390,7 +390,8 @@ wrong.
    pass through the crossing threads' transitions, which puts two highs at one
    crossing — geometrically impossible. That's an energy barrier, not a free
    slide. What survives is smaller: the outermost threads have crimp on one side
-   only, and their final dash ends free.
+   only. (Their final dashes used to end free; edge grounding now anchors every
+   boundary high run on a bed-fed post.)
 6. **Split posts give a better joint.** Doesn't work; see §3.
 7. **Nozzle clearance measured from the bed.** Wrong reference; see §4.1.
 8. **Coverage is scale-invariant, so this can only ever be a scrim.** True
@@ -453,9 +454,14 @@ Everything downstream is conditional on these.
 ### Phase 3 — structures
 
 - **Selvedge U-turns.** Serpentine the thread around at the edge instead of
-  ending it. Needs one extra transition just inside each edge to bring every
-  thread down to z1 before the turn, since a mid-air 180° arc isn't printable.
-  That's O(n) extra posts against O(n²) in the field.
+  ending it. The first half exists: **edge grounding** (default on) puts the
+  "extra transition just inside each edge" on every boundary high run — a
+  post at the run's existing end, fed by a ~step/4 low stub on the bed, so
+  nothing is extruded ending in air and the clearance envelope is untouched
+  (anchors sit pitch/2 from the perpendicular family like every interior
+  post). What remains of this item is thread *continuity*: joining adjacent
+  lines into one serpentine thread around the turn. Still O(n) extra posts
+  against O(n²) in the field.
 - **Pile loops.** An arch springing from two posts and rising above the fabric.
   Cheapest route to bulk and softness, doesn't touch the in-plane structure.
   Terry, velvet and corduroy are all this.

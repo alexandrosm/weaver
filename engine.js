@@ -26,7 +26,7 @@ const DEFAULT_END_G = "M104 S0\nM140 S0\nM107";
 const P = {
   lattice:"biaxial", pattern:"twill", pitch:3.6, size:30, rot:45,
   bd:0.9, bh:0.45, sw:0.40, sh:0.20,
-  offd:false, offFrac:0.40, ovs:0.30, plies:1, pgap:0.25, tack:3,
+  offd:false, offFrac:0.40, ovs:0.30, plies:1, pgap:0.25, tack:3, edge:true,
   nflat:0.80, ncone:120,
   ps:2400, bs:3600, ts:9000, pspd:300, pstep:3, pflow:1.10, acc:6000,
   ht:230, bt:100, fan:40, bed:[110,110], draft:CREPE.map(r=>r.slice())
@@ -86,14 +86,37 @@ function dashesForLine(L,xs){
   const runs=[];let s=0;
   for(let i=1;i<xs.length;i++) if(xs[i].hi!==xs[s].hi){runs.push([s,i-1,xs[s].hi]);s=i;}
   runs.push([s,xs.length-1,xs[s].hi]);
-  const rev=(((L.i%2)+2)%2)===1;                     // serpentine alternate threads
   const last=runs.length-1;
-  const out=runs.map(([a,b,hi],k)=>{
-    const lo=mid(a-1),up=mid(b);
-    return rev?{L,pa:up,pb:lo,hi,post:k>0,postS:k<last}
-              :{L,pa:lo,pb:up,hi,post:k<last,postS:k>0};
-  });
-  if(rev) out.reverse();
+  // built in +t order with pass-1-forward flags, mirrored below for serpentine
+  const out=runs.map(([a,b,hi],k)=>({L,pa:mid(a-1),pb:mid(b),hi,post:k<last,postS:k>0}));
+  if(P.edge){
+    // ground the edges: a thread must not end in the air (NOTES §8 phase 3).
+    // A boundary run that is high gets a post at its existing end — the same
+    // pitch/2 from the perpendicular family as every interior post, so the
+    // clearance envelope is untouched — fed by a short low stub on the bed
+    // just outside. Stubs and anchors ride the normal two-pass machinery: a
+    // leading stub is a pass-1 low whose travel end grows the post; a
+    // trailing anchor post is grown by pass 2 like any origin post.
+    const q=step/4;
+    const h0=out[0];
+    if(h0.hi){
+      h0.postS=true;
+      out.unshift({L,pa:h0.pa-q,pb:h0.pa,hi:false,post:true,postS:false});
+    }
+    const hn=out[out.length-1];
+    if(hn.hi){
+      hn.post=true;
+      out.push({L,pa:hn.pb,pb:hn.pb+q,hi:false,post:false,postS:true});
+    }
+  }
+  const rev=(((L.i%2)+2)%2)===1;                     // serpentine alternate threads
+  if(rev){
+    for(const D of out){
+      const t=D.pa;D.pa=D.pb;D.pb=t;
+      const p=D.post;D.post=D.postS;D.postS=p;
+    }
+    out.reverse();
+  }
   return out;
 }
 function allDashes(){
@@ -328,6 +351,7 @@ function runCheck(log){
   const base=JSON.parse(JSON.stringify(P));
   const cases=[
     ["defaults",{}],
+    ["edges off",{edge:false}],
     ["plain, big button",{pattern:"plain",bd:1.2,bh:0.6,offd:false}],
     ["satin",{pattern:"satin",pitch:4.2}],
     ["custom draft",{pattern:"custom",draft:[[1,0,0,1],[0,1,1,0],[0,1,0,1],[1,0,1,0]]}],
@@ -355,6 +379,9 @@ function runCheck(log){
     pairs:
     for(let i=0;i<cs.length;i++) for(let j=i+1;j<cs.length;j++)
       if(dist(cs[i],cs[j])<1e-6){errs.push(`coincident posts at (${cs[i]})`);break pairs;}
+    // grounding: with edges on, no high dash may end in the air
+    if(P.edge) for(const D of tp.ds)
+      if(D.hi&&(!D.post||!D.postS)){errs.push("ungrounded boundary high dash");break;}
     // op stream sanity
     if(!tp.ops.length||tp.ops[0].o!=="T") errs.push("op stream does not open with a travel");
     for(const op of tp.ops){
@@ -395,6 +422,7 @@ options mirror the app's parameters:
   --lattice biaxial|triaxial   --pattern plain|twill|crepe|satin|custom
   --pitch --size --rotate --button-d --button-h --strand-w --strand-h
   --offset-dashes / --no-offset-dashes   --offset-frac --overshoot
+  --ground-edges / --no-ground-edges     bed-anchor boundary high runs (default on)
   --plies --tack-every --ply-gap
   --print-speed --bridge-speed --travel-speed --post-speed --post-steps
   --post-flow --accel --nozzle-temp --bed-temp --fan --nozzle-flat --nozzle-cone
@@ -427,6 +455,8 @@ outputs (default: --report):
     else if(flag==="ops") want.ops=a[++i]||die("--ops needs a path or -");
     else if(flag==="offset-dashes") P.offd=true;
     else if(flag==="no-offset-dashes") P.offd=false;
+    else if(flag==="ground-edges") P.edge=true;
+    else if(flag==="no-ground-edges") P.edge=false;
     else if(flag==="draft"){P.draft=loadDraft(a[++i]||die("--draft needs a path"));P.pattern="custom";}
     else if(flag==="config"){
       const cfg=JSON.parse(fs.readFileSync(a[++i]||die("--config needs a path"),"utf8"));
