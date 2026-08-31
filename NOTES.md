@@ -1,14 +1,14 @@
 # Printed woven textile — design notes
 
 The weave engine exists once, in `engine.js`. The browser app
-`loomwright.html` and the command line are two faces of that one file;
+`index.html` and the command line are two faces of that one file;
 `fcexport.py` adapts its op stream to FullControl for the plot view and
 printer profiles.
 
-Nothing here has been printed. Every number in this document is computed
-(`bun engine.js --check` guards the geometry invariants), but no filament has
-been extruded. Read the **Verification status** section
-before trusting anything.
+Layered PLA and PP fabrics have now been printed; the PP construction was the
+first to release without manual loosening. `bun engine.js --check` still guards
+the computed geometry invariants. Read **Verification status** for the exact
+boundary between physical evidence and modelling.
 
 ---
 
@@ -23,18 +23,23 @@ continuously undulating warp forms arches roughly 2 mm long with about 0.3 mm of
 air beneath them, and a later weft would have to travel under one. The nozzle is
 about a millimetre wide that close to the tip. It doesn't fit.
 
-The workaround is to split each thread across two z levels joined by vertical
-posts:
+The workaround is to split each thread across two z levels and build every
+transition from three fused bands:
 
 ```
-   z3  ─────────────                ─────────────      high dash (bridges)
-              │      ╲            ╱      │
-   post       █       ╲          ╱       █             extrude-in-place post
-              │        ────────         │
-   z1  ───────┴──────                ──┴───────        low dash (on the bed)
-              ▲                          ▲
-          transition                 transition
+   z3  ───────●────────                ───────●───────    high dash + top dot
+              │                                │
+   z2         █                                █          virtual-middle riser
+              │                                │
+   z1  ───────●────────                ───────●───────    low dash + bottom dot
+              ▲                                ▲
+          transition                       transition
 ```
+
+Every dash owns a circular dot at both endpoints in its own deposition layer.
+At an internal run boundary, one middle riser connects the low endpoint dot to
+the high endpoint dot. The three bands fuse into one cylindrical-type button
+without forcing either dash to build a blob across the other dash's z level.
 
 Warp and weft do this out of phase, so at every interlaced crossing one thread
 is high and the other low. That is a genuine over-under interlace.
@@ -98,10 +103,21 @@ The lift rule is *just a lookup*. On a loom, arbitrary per-thread control is wha
 a jacquard head is for and costs thousands of independently actuated hooks. Here
 it costs nothing, which is why the app exposes an editable grid.
 
-**Triaxial** — a cyclic rule instead: A over B, B over C, C over A. This is the
-rock-paper-scissors arrangement, impossible for rigid bars but fine for threads
-that undulate. It gives every thread a perfect alternating over/under sequence
-with no bookkeeping at all.
+**Triaxial** — three separate pair relationships share one two-level stack. The
+canonical pairs are A→B, B→C, and C→A; reversing a query complements the result,
+so exactly one thread is high at every crossing. With line indices *a* and *b*:
+
+| pattern | canonical-pair rule | float sequence | purpose |
+|---|---|---|---|
+| cyclic 1/1 | first family always over the next | A/B/C all 1/1 | shortest bridges, most locking points |
+| triaxial 2/2 | `(b − a) mod 2 == 0` | A/B/C all 2/2 | balanced drape with about half the risers |
+| directional | parity rule differs across AB/BC/CA | A 1/1; B/C 2/2 | one locked axis, oriented with swatch rotation |
+
+Directional uses `a mod 2 == 0` for A→B, `(a + b) mod 2 == 0` for
+B→C, and `b mod 2 == 0` for C→A. This is deliberately functional rather than
+decorative: it keeps every run at one or two crossings. The obvious mirrored
+three-step diamond draft creates three-crossing runs; at viable triaxial pitches
+that produces roughly 11 mm bridges, so it is not exposed as a printable mode.
 
 ### 2.3 From crossings to dashes
 
@@ -114,22 +130,26 @@ For each line:
    float — a stretch where the thread stays at one level.
 4. Emit one **dash** per run, spanning from the midpoint before the run's first
    crossing to the midpoint after its last.
-5. Emit a **post** at each internal boundary between runs.
+5. Give every dash a circular endpoint dot at both ends, deposited at that
+   dash's own low or high z level.
+6. Emit one **virtual-middle riser** at each internal boundary between runs.
 
-So a plain-weave dash spans one pitch and carries one crossing; a twill dash
-spans two. Posts land midway between crossings, which is why warp posts and weft
-posts never contend for the same location.
+In biaxial plain weave a dash spans one pitch and carries one crossing; a 2/2
+twill dash spans two pitches. Triaxial crossings are `pitch / √3` apart, so its
+cyclic dashes span one such interval. Triaxial 2/2 spans two; directional spans
+one on family A and two on B/C. Risers remain at run boundaries and never
+contend for the same location.
 
 ### 2.4 The z stack
 
 With layer height *h*, strand width *w*, button height *H*, button diameter *D*:
 
 ```
-low strand centre     h/2
-post                  0 → H
-high strand centre    H + h/2
-high strand underside H + h − d_free,  where d_free = √(4wh/π)
-vertical gap          H − d_free
+low strand + dot layer       0 → h       centre h/2
+virtual-middle riser         h → H
+high strand + dot layer      H → H + h   centre H + h/2
+high strand underside        H + h − d_free,  where d_free = √(4wh/π)
+vertical gap                 H − d_free
 ```
 
 `d_free` is the diameter of the free-air strand: a bridge is not squished
@@ -137,12 +157,13 @@ against anything, so it comes out round rather than flattened. At w = 0.4,
 h = 0.2 that is 0.32 mm, not 0.2. Getting this wrong overstates the gap by
 120 µm, which matters because the whole budget is a few hundred microns.
 
-The table above is centreline geometry. **Emitted G-code uses nozzle-tip
-coordinates with the tip at the top of each feature**: low dashes at z = *h*,
-every post grown to *H*, bridges at *H* + *h*. An earlier
-version emitted centreline z — half a layer low everywhere — which doubled the
-first-layer squish and made pass-1 posts stand *H* proud of the pass-1 tip
-plane instead of the modelled *H* − *h*. See §7.10.
+The table above is physical/centreline geometry. **Emitted G-code uses
+nozzle-tip coordinates with the tip at the top of each deposited band**:
+low dashes and their dots at z = *h*, middle risers ending at z = *H*, and
+high dashes and their dots at z = *H* + *h*. The riser never consumes the top
+layer; that layer belongs to the high dash. An earlier version emitted
+centreline z — half a layer low everywhere — which doubled the first-layer
+squish. See §7.10.
 
 ### 2.5 Offset dashes (the stretch mechanism)
 
@@ -177,62 +198,64 @@ consequential parameter in the design.
 
 ## 3. Toolpath
 
-Two passes, travelling in **opposite directions** along each thread.
+Two passes, travelling in **opposite directions** along each thread. Every dash
+uses the same local grammar: endpoint dot, road, endpoint dot.
 
-- **Pass 1** prints the low dashes. At each dash's travel-end it grows a post
-  from the bed up to z3, moving laterally across the post as it rises (that
-  lateral move is the sawtooth chord).
-- **Pass 2** prints the high dashes, travelling the other way. At its
-  travel-start it descends to the bed and grows its own post upward, then
-  bridges back and lands on the post pass 1 already built.
+- **Pass 1** prints the low dashes and both bottom endpoint dots. When the
+  dash owns its travel-end transition, its second dot continues upward only
+  through the virtual-middle band, from z1 to z2 = *H*. With offset dashes,
+  that rise still traverses the button and preserves the sawtooth return chord.
+- **Pass 2** prints the high dashes in reverse. When a high dash owns its
+  travel-start transition, the nozzle descends onto the bottom dot that pass 1
+  already printed, grows the middle riser only to z2, climbs through the top
+  layer, deposits its own top dot, then bridges back. At the landing end it
+  deposits the second top dot before the optional overshoot.
 
-Because the passes run opposite ways, they claim **disjoint sets of posts**.
-Every transition gets built exactly once and no separate post pass is needed.
+Because the passes run opposite ways, they claim **disjoint sets of middle
+risers**. Every transition gets one bottom dot, one riser, and one top dot;
+no separate post pass and no duplicate riser are needed.
 
-The invariant that makes this general: **the post always sits at the dash's
-pass-1 travel end**, whichever direction pass 1 happens to run on that thread.
-That is what allows serpentining alternate threads, which cut estimated travel
+The invariant that makes this general: **the middle riser always sits at the
+dash's pass-1 travel end**, whichever direction pass 1 happens to run on that
+thread. That allows serpentining alternate threads, which cut estimated travel
 from 43% to 31% of print time.
 
-Two ordering constraints are load-bearing and easy to destroy. Post
-disjointness comes from per-dash orientation, so it survives reordering — but
-z-safety does not: pass-2 travels descend to bed level through the field, and
-they only avoid printed bridges because the reverse sweep keeps the region
-ahead of the nozzle unprinted. Any dash reordering (the Phase-2
-nearest-neighbour idea) must either preserve a clean sweep front or hop
-travels above *H* + *h*, which eats into the savings.
+Two ordering constraints remain load-bearing. Riser disjointness comes from
+per-dash orientation, so it survives reordering — but z-safety does not:
+pass-2 travels descend to the low level through the field, and only avoid
+printed bridges because the reverse sweep keeps the region ahead of the nozzle
+unprinted. Any dash reordering must preserve a clean sweep front or hop above
+*H* + *h*.
 
-### Why posts are cheap
+### Why endpoint buttons are cheap
 
-The nozzle has to decelerate to zero at every dash end anyway. Folding the post
-into that stop means its marginal cost is only the dwell, not a full
-travel-decelerate-dwell-accelerate cycle. FullControl's `StationaryExtrusion`
-does exactly this — the emitted G-code alternates `G1 F300 E0.088` with short
-rising moves.
+The nozzle already decelerates to zero at every dash end. Folding a stationary
+dot into that stop adds only extrusion dwell, not another
+travel-decelerate-dwell-accelerate cycle. FullControl's
+`StationaryExtrusion` is the corresponding primitive.
 
-There is a nice second-order benefit: corner artifacts and pressure-advance
-overshoot land *inside* a feature whose job is to be a blob. Square corner
-velocity can go up and PA can dump into the post.
+Corner artifacts and pressure-advance overshoot also land inside a feature
+whose job is to hold extra material. Square corner velocity can go up and PA
+can unload into the button.
 
-### Joint asymmetry (unresolved)
+### Layered joint — corrected from the PP print
 
-Pass 2's posts are the good joints: it descends and grows a post directly on top
-of an existing z1 dash end, full footprint, warm substrate. Pass 1's posts are
-weaker — pass 2's bridge *terminates* onto them, so a 0.34 mm strand end lands on
-a 1.2 mm disc.
+The polypropylene swatch exposed the flaw in treating a node as one supplemental
+blob: its two owners arrive at different z levels, and the old pass-2 grow
+stretched the same nominal button volume through an extra layer while a landing
+bridge supplied no matching top cap. That encourages asymmetric, non-cylindrical
+nodes and leaves less same-level area for fusion.
 
-The `overshoot` parameter is the cheap mitigation: pass 2 runs past the post
-centre so the strand lies across the full disc rather than clipping its edge.
+The corrected node does **not** split one post into two equal halves. It assigns
+each physical band to its natural owner: the low dash prints the bottom dot, one
+owner prints the middle riser, and the high dash prints the top dot. Supplemental
+volume is calculated per band after subtracting the road volume already passing
+through it. The top landing dot is centred before overshoot, so overshoot still
+lays the bridge across the node without pulling the cap off-centre.
 
-Both post kinds stop at *H*, matching the z stack in §2.4. The bridge leaves
-its origin post through a short climb — the tip rising *h* over roughly the
-button radius, so the ramp stays local and the span stays level — and lands
-on the far post by draping onto its top from *h* above. Overshoot is skipped
-at free thread ends — there is nothing to land on there.
-
-A "split post" idea — each pass building half — was considered and **does not
-work**. The two halves would have to meet at one z, but the dashes arrive at
-different z levels. It is recorded here so nobody re-derives it.
+This reverses the earlier rejection of split construction. Equal halves meeting
+at one z would indeed fail; level-owned caps joined by a separate middle riser
+do not require the dashes to arrive at the same z.
 
 ---
 
@@ -240,8 +263,8 @@ different z levels. It is recorded here so nobody re-derives it.
 
 ### 4.1 Nozzle clearance — usually the binding one
 
-While pass 1 runs, the tip sits at z = *h*, so a post stands only (*H* − *h*)
-proud of it. The outer cone at that height is
+While pass 1 runs, the tip sits at z = *h*, so a middle riser stands only
+(*H* − *h*) proud of it. The outer cone at that height is
 
 ```
 cone_width(H − h) = tip_flat + 2 (H − h) tan(cone_angle / 2)
@@ -253,10 +276,10 @@ and the requirement is
 gap ≥ D/2 + cone_width(H − h)/2
 ```
 
-where `gap` is the shortest distance from a low dash's centreline to a post that
-is not one of its own endpoints. In plain biaxial that distance is **pitch/2**,
-and the nearest post belongs to the perpendicular family — which is why the
-figure is pattern-independent.
+where `gap` is the shortest distance from a low dash's centreline to a middle
+riser that is not one of its own endpoints. In plain biaxial that distance is
+**pitch/2**, and the nearest riser belongs to the perpendicular family — which
+is why the figure is pattern-independent.
 
 An earlier version measured the cone width at *H* above the **bed** rather than
 above the tip. That overstates the cone and flatters the clearance by roughly
@@ -296,9 +319,9 @@ strand underneath, which destroys the free-crossing property the whole design
 depends on.
 
 This couples to bed temperature in a way that is worth watching: bed heat is not
-selective. Running the bed above Tg to help the posts weld also softens every z1
-strand you want the bridges *not* to weld to. Sweep bed temperature and post
-height as a 2D grid, not one at a time.
+selective. Running the bed hot enough to fuse the layered buttons also softens
+every z1 strand you want the bridges *not* to weld to. Sweep bed temperature and
+button height as a 2D grid, not one at a time.
 
 ### 4.4 Stop count
 
@@ -318,28 +341,41 @@ the same coverage) beats halving the pitch (4× cost).
   omitting unchanged axes; both use the rectangle area model,
   `area = w × h`, `E = volume / (π × (1.75/2)²)`).
 - `bun engine.js --check` verifies, across a sweep of configurations:
-  exactly one high thread per crossing, post sites strictly pairwise
-  distinct, a sane op stream, and finite metrics.
+  exactly one high thread per crossing, the declared 1/1 or 2/2 triaxial float
+  sequences, riser sites strictly pairwise distinct, exactly two correctly
+  placed level-owned endpoint dots per dash, a sane op stream, consistent
+  stationary-volume accounting, and finite metrics.
 - The feasibility map's analytic model matches full geometry rebuilds to three
   decimals at sampled points.
 
+**Physically observed:**
+
+- The matched 60 mm three-band PLA and PP fabrics both printed very well.
+  The PP fabric released without manual loosening; the PLA fabric still needed
+  loosening. This validates the bottom-dot / middle-riser / top-dot construction
+  and makes PP the current preferred material/process combination.
+
 **Modelled, not measured:**
 
-- Print time, and the post/travel split. The time model assumes rest-to-rest
-  triangular or trapezoidal moves at a single scalar acceleration. It says the
-  print is travel-bound (27–35%) rather than dwell-bound (14–21%), which
-  contradicts the initial expectation that buttons would dominate. Worth
-  confirming with a stopwatch before acting on it.
-- Nozzle cone geometry. Default is a guess.
+- Print time, and the button/travel split. The time model assumes rest-to-rest
+  triangular or trapezoidal moves at a single scalar acceleration. Endpoint
+  dots deliberately move more time into stationary extrusion; confirm the
+  estimate with a stopwatch before tuning motion around it.
+- Nozzle cone geometry unless the configured tip flat and angle were measured.
 
-**Assumed, with no evidence at all:**
+**Changed after physical tests, not yet print-verified:**
 
-- That the post bonds to the cold dash ends beneath it. **This is the entire load
-  path.** If it fails, nothing else matters.
+- The closing corner tie now deposits its deferred endpoint dot over the weld
+  before retracting, hiding the closure inside the button rather than on the
+  curved road.
+- The 192 mm rot90 MK4S PP field has been generated and launched, but its
+  finished physical inspection is still pending.
+
+**Still assumed:**
+
 - That the crossings stay free.
-- That bridges don't sag into the layer below.
-- That a 0.44 mm crimp on a 3 mm pitch is enough interlace to lock rather than
-  pull flat.
+- That bridges do not sag into the layer below.
+- That the crimp is enough to lock rather than pull flat.
 - Everything about two-ply. Ply 2's low dashes bridge over ply 1's structure
   rather than sitting on the bed, and the metrics only describe a single ply.
 
@@ -361,6 +397,19 @@ Triaxial has by far the shortest bridges and by far the worst clearance, because
 transitions come every 0.577 × pitch along each thread and there are three
 families. At matched areal coverage triaxial wants 1.5× the biaxial pitch but
 *needs* 2×, which partly cancels its advantage.
+
+At pitch 6.8 mm with a 0.9 × 0.45 mm button and a 34 mm field, the three
+printable triaxial modes separate the transition/bridge trade cleanly:
+
+| triaxial mode | stops/cm² | longest bridge | clearance | dashes |
+|---|---:|---:|---:|---:|
+| cyclic 1/1 | 11.9 | 3.03 mm | +0.42 mm | 156 |
+| 2/2 twill | 6.7 | 6.95 mm | +0.42 mm | 96 |
+| directional A-lock | 8.5 | 6.95 mm | +0.42 mm | 116 |
+
+These are computed comparisons, not print validation. The shared three-band
+button construction has printed successfully, but no complete triaxial mode has
+been physically validated; all three require small swatches.
 
 ---
 
@@ -391,8 +440,10 @@ wrong.
    crossing — geometrically impossible. That's an energy barrier, not a free
    slide. What survives is smaller: the outermost threads have crimp on one side
    only. (Their final dashes used to end free; edge grounding now anchors every
-   boundary high run on a bed-fed post.)
-6. **Split posts give a better joint.** Doesn't work; see §3.
+   boundary high run on a bed-fed layered node.)
+6. **Split construction cannot work because the levels differ.** Equal halves
+   cannot; level-owned endpoint caps plus a separate middle riser can. The PP
+   swatch forced this correction; see §3.
 7. **Nozzle clearance measured from the bed.** Wrong reference; see §4.1.
 8. **Coverage is scale-invariant, so this can only ever be a scrim.** True
    in-plane, but stacking plies adds coverage in z, which the argument doesn't
@@ -418,14 +469,15 @@ Ordered so each phase unblocks the next. Do not skip phase 0.
 
 Everything downstream is conditional on these.
 
-1. **Does the post bond?** Print 30 mm swatches, pull a thread. If the posts
-   don't hold, the design fails and no parameter tuning saves it.
+1. **Does the layered node bond?** Print 30 mm swatches, pull a thread, and
+   inspect whether all three bands remain fused. If the nodes do not hold, the
+   design fails and no parameter tuning saves it.
 2. **Do the crossings stay free?** Same swatches at 1×, 1.5×, 2× button height.
    Flex in the hand. This is the cheapest test in the project.
 3. **Dwell or travel?** Time a swatch, then time the identical G-code with the
-   `StationaryExtrusion` lines stripped (posts will be undersized; doesn't
-   matter). The delta tells you what fraction is dwell and settles whether motion
-   tuning is worth attention.
+   `StationaryExtrusion` lines stripped (buttons will be undersized; that is
+   acceptable for this timing control). The delta settles whether motion tuning
+   is worth attention.
 
 ### Phase 1 — calibrate the model against reality
 
@@ -441,11 +493,11 @@ Everything downstream is conditional on these.
 ### Phase 2 — mechanisms
 
 - Offset dashes: measure actual extension against the predicted ~37%.
-- Material. PLA to validate geometry; then polypropylene, which is the real
-  candidate — every post is now a living hinge and PP is the living-hinge
-  material, with chain orientation running the right way for free from the
-  extrusion direction. Note the bed-above-Tg bonding argument does **not**
-  transfer to PP (Tg is subzero; bonding needs melt near 165 °C).
+- Material. PLA validates geometry; polypropylene is the real candidate —
+  every layered node is a living hinge and PP is the living-hinge material,
+  with chain orientation running the right way for free from the extrusion
+  direction. The bed-above-Tg bonding argument does **not** transfer to PP
+  (Tg is subzero; bonding needs melt near 165 °C).
 - Toolpath ordering. Travel is the largest single time component. Serpentine
   already helped; a nearest-neighbour or greedy tour over dash start points
   should help more. Constraint: reordering breaks the reverse-sweep z-safety
@@ -464,6 +516,10 @@ Everything downstream is conditional on these.
   new chain's start is tied to the nearest loose chain endpoint, and the
   final end ties back to the last one — when the corners line up (they do
   for biaxial), the whole perimeter closes into a loop with no loose ends.
+  The open chain-start dot is now deferred until its closing corner tie reaches
+  that endpoint. The tie terminates at the endpoint centre, then stationary dot
+  extrusion buries the closure weld inside the button instead of leaving it on
+  the curved road; dot count and endpoint volume remain unchanged.
   The fold-in order means no neighbouring post exists yet
   when an arc is drawn, and the clearance envelope is untouched. O(n) extra
   posts against O(n²) in the field, as predicted.
@@ -500,10 +556,10 @@ Everything downstream is conditional on these.
 
 Things no amount of modelling will settle.
 
-- Does a bond-contrast ratio actually exist — posts welding reliably while
+- Does a bond-contrast ratio exist — layered nodes fusing reliably while
   crossings stay free — or is there no temperature window that gives both?
 - Is the crimp deep enough to lock, or does the fabric just pull flat under
-  tension with the posts carrying everything?
+  tension with the layered nodes carrying everything?
 - What does it feel like? Every argument here is about geometry and print time.
   Nothing predicts hand, drape, or sound.
 - Does the unfused interlace survive handling, or do threads walk out over time
@@ -525,37 +581,48 @@ or node.
 
 ```
 P                              all parameters (the app mutates this object live)
-families(), liftRule()         lattice and pattern definition
-highAt()                       who is on top at a crossing
+printBounds()                  rotation-aware bed fit and probe margin
+families(), liftRule()         lattice and biaxial pattern definition
+triaxialPairHigh(), highAt()   triaxial pair rules and crossing ownership
 buildLines(), crossings()      lattice construction
 dashesForLine()                runs → dashes; sets the serpentine direction
 dashPts(), postC()             plan-space geometry incl. the sawtooth offset
-toolpath()                     the two-pass op stream ("T"/"D"/"S") + preview segs
-metrics(), report()            the four constraints and the time model
-gcode()                        op stream → printable G-code text
-runCheck()                     geometry invariant suite (--check)
+endpointDotVol(), riserVol()   volume-complete three-band button construction
+toolpath()                     two-pass op stream + per-ply pass boundaries
+metrics(), report()            geometry, bed, flow and time constraints
+gcode()                        profiles + flow/fan/travel controls → G-code
+runCheck()                     geometry and printer-profile invariant suite
 ```
 
 ```bash
 bun engine.js --report
 bun engine.js --pattern plain --pitch 3.6 --gcode swatch.gcode
+bun engine.js --lattice triaxial --triaxial-pattern directional --report
 bun engine.js --draft figured.json --gcode figured.gcode   # custom lift plan
 bun engine.js --json                                       # metrics for scripts
 bun engine.js --check                                      # invariant suite
 ```
 
-### `loomwright.html`
+### `index.html`
 
 The app: UI only, engine loaded via `<script src="engine.js">`; works over
 `file://`, no build step, no dependencies beyond a webfont. Live 3D preview —
 fabric mode renders the deposited result under a volume-conservation
 deposition model — flat w × h roads on support, round Ø√(4wh/π) strands in
-free air, blob posts with base spread, profile-aware shading, cast shadows —
-with contact-anchored drawing so exaggerated z never opens fake gaps at the
+free air, layered cylindrical buttons, profile-aware shading, and cast shadows
+— with contact-anchored drawing so exaggerated z never opens fake gaps at the
 joints; toolpath mode shows the commanded tip
-path — plus the feasibility map, constraint gauges, an editable lift plan,
-and two outputs: G-code generated in-browser, or a parameter JSON
-(`Export config`) that feeds the CLI and `fcexport.py`.
+path — plus the feasibility map, constraint gauges, editable biaxial lift plan,
+three pairwise triaxial lift tiles, and complete print controls. The named
+biaxial and triaxial pattern selectors are both always visible; the inactive
+family is dimmed, and choosing any pattern activates its matching lattice.
+Their independent settings persist without overloading semantics. The app
+exposes square size, rotation, selected-bed fit, weave and
+node dimensions, nozzle geometry, speeds, hop/retraction and its travel
+threshold, global model flow, per-pass fan, temperature, and volumetric limit.
+Generic, Core One PLA, and the physically successful MK4S PP profile are
+selectable. It outputs G-code or the complete parameter JSON consumed by the
+CLI and `fcexport.py`.
 
 ### `fcexport.py`
 
@@ -573,21 +640,27 @@ python fcexport.py --out tri -- --lattice triaxial --pitch 6.8
 
 PrusaLink uploader for Buddy printers (Core One, MK4, XL): PUT to
 `/api/v1/files/<storage>/<name>` with X-Api-Key (digest fallback, user
-"maker"), optional print-after-upload. The engine's `coreone` printer
-profile emits the matching Buddy start sequence — model check, G28,
-area-limited G29 via an M555 computed from the actual swatch bbox, purge
-line — and centres the swatch on the Core One bed (125, 110).
+"maker"), optional print-after-upload. The engine owns two matching Buddy
+profiles. `coreone` targets the device-authoritative 0.6 mm nozzle and PLA;
+`mk4spp` targets the device-authoritative 0.5 mm nozzle and the successful
+Fiberlogy PP envelope. Both centre the field, compute area-limited M555 probing
+from the rotated square plus a two-pitch margin, and emit their own verified
+startup/purge/shutdown sequence.
 
 ```bash
-bun engine.js --printer coreone --gcode swatch.gcode
-python print.py swatch.gcode --host <printer-ip> --key <key> --go
+bun engine.js --printer coreone --gcode pla.gcode
+bun engine.js --printer mk4spp --size 192 --rotate 90 --gcode pp.gcode
+python print.py pp.gcode --host <printer-ip> --key <key> --go
 ```
 
 ### Where to extend
 
-- **A new weave** is one function returning a boolean in `liftRule`, plus a
-  pattern-selector entry — or just draw it: custom drafts are first-class
+- **A new biaxial weave** is one function returning a boolean in `liftRule`,
+  plus a biaxial selector entry — or just draw it: custom drafts are first-class
   (`--draft` / the Custom pattern).
+- **A new triaxial weave** is a bounded pair rule in `triaxialPairHigh()`, a
+  triaxial selector entry, and an asserted per-family float sequence in
+  `runCheck()`.
 - **A new lattice** is an entry in `families()` plus a branch in `highAt()`.
   Anything expressible as families of parallel lines with a pairwise
   over/under rule will work unmodified downstream.
