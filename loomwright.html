@@ -217,8 +217,8 @@ textarea:focus-visible{outline:2px solid var(--post);outline-offset:1px}
       <canvas id="draft" height="220"></canvas><p class="note" id="draftnote"></p></div></details>
     <details><summary>Output</summary><div class="body">
       <div class="seg" id="prsel">
-        <button data-pr="generic" aria-pressed="true">Generic</button>
-        <button data-pr="coreone" aria-pressed="false">Core One · PLA 0.6</button>
+        <button data-pr="generic" aria-pressed="false">Generic</button>
+        <button data-pr="coreone" aria-pressed="true">Core One · PLA 0.6</button>
       </div>
       <button class="wide go" id="gen">Generate G-code</button>
       <button class="wide" id="dl" style="margin-top:8px">Download .gcode</button>
@@ -236,11 +236,15 @@ textarea:focus-visible{outline:2px solid var(--post);outline-offset:1px}
 </main>
 </div>
 
-<script src="engine.js?v=10"></script>
+<script src="engine.js?v=11"></script>
 <script>
 "use strict";
 /* UI for engine.js, which the script tag above loads first — geometry,
    op stream, metrics, gcode and report all live there, once. */
+Object.assign(P,PRINTERS.coreone.defaults,{
+  printer:"coreone",bed:PRINTERS.coreone.bed.slice()
+});
+const CORE_ONE_NOTE="Default Core One 0.6 profile: 120 mm plain weave, 4.5 mm pitch, 2.1 × 0.9 mm buttons, nominal flow, 230/60 °C, 0.6 mm hop only beyond 2× pitch, and 0.8 mm retraction at 45/25 mm/s.";
 
 /* ==================================================================
  * CONTROLS — built from a spec so importance drives layout
@@ -912,13 +916,14 @@ $("prsel").addEventListener("click",e=>{
     x.setAttribute("aria-pressed",String(x.dataset.pr===P.printer)));
   lastG=null;
   $("outnote").textContent=P.printer==="coreone"
-    ? "Device-matched Core One 0.6 / Prusament PLA: 230/60 °C, area mesh, purge, PA 0.022, 0.6 mm hop only beyond 2× pitch, and 0.8 mm retraction at 45/25 mm/s."
+    ? CORE_ONE_NOTE
     : "Parameters changed — generate again.";
 });
 $("startg").value=printerDef().start();
 $("endg").value=printerDef().end();
 window.addEventListener("resize",()=>{drawMap();drawDraft();fitView();});
 buildControls(); syncControls(); recompute();
+$("outnote").textContent=CORE_ONE_NOTE;
 </script>
 </body>
 </html>

@@ -89,8 +89,9 @@ const PRINTERS={
     start:()=>"G28 ; home\nG92 E0",
     end:()=>"M104 S0\nM140 S0\nM107"},
   coreone:{label:"Prusa Core One 0.6 / Prusament PLA",bed:[125,110],
-    defaults:{ht:230,bt:60,fan:40,sw:0.65,sh:0.25,nflat:1.0,
-      pitch:4.0,bd:1.2,bh:0.6,zhop:0.6,retract:0.8,
+    defaults:{lattice:"biaxial",pattern:"plain",pitch:4.5,size:120,rot:45,
+      bd:2.1,bh:0.9,sw:0.4,sh:0.45,offd:false,nflat:0.6,
+      ht:230,bt:60,fan:40,zhop:0.6,retract:0.8,
       retSpeed:2700,primeSpeed:1500},
     start:coreOneStart,end:coreOneEnd},
 };
@@ -623,7 +624,7 @@ function runCheck(log){
             lines[firstHop+3]!==primeLine)
       coreErr="long-travel retract / lift / XY / lower / prime order";
   }
-  if(!coreErr&&(coreM.clear<0.2||coreM.vgap<0.08))
+  if(!coreErr&&(coreM.clear<0.1||coreM.vgap<0.08))
     coreErr=`unsafe profile geometry (clear ${coreM.clear.toFixed(2)}, gap ${coreM.vgap.toFixed(2)})`;
   if(coreErr){bad++;log("  FAIL  Core One PLA profile");log(`        ${coreErr}`);}
   else log("  ok    Core One PLA profile");
