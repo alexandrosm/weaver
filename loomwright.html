@@ -236,7 +236,7 @@ textarea:focus-visible{outline:2px solid var(--post);outline-offset:1px}
 </main>
 </div>
 
-<script src="engine.js?v=11"></script>
+<script src="engine.js?v=12"></script>
 <script>
 "use strict";
 /* UI for engine.js, which the script tag above loads first — geometry,
@@ -244,7 +244,7 @@ textarea:focus-visible{outline:2px solid var(--post);outline-offset:1px}
 Object.assign(P,PRINTERS.coreone.defaults,{
   printer:"coreone",bed:PRINTERS.coreone.bed.slice()
 });
-const CORE_ONE_NOTE="Default Core One 0.6 profile: 120 mm plain weave, 4.5 mm pitch, 2.1 × 0.9 mm buttons, nominal flow, 230/60 °C, 0.6 mm hop only beyond 2× pitch, and 0.8 mm retraction at 45/25 mm/s.";
+const CORE_ONE_NOTE="Default Core One 0.6 profile: 120 mm plain weave, 4.5 mm pitch, 2.1 × 0.9 mm buttons, nominal flow, 230/60 °C, 0.6 mm hop on every XY travel, and 0.8 mm retraction at 45/25 mm/s.";
 
 /* ==================================================================
  * CONTROLS — built from a spec so importance drives layout
@@ -298,7 +298,7 @@ const GROUPS=[
    {type:"pair",items:[
      {k:"retSpeed",l:"Retract speed",u:"mm/m",min:300,max:6000,st:100,dp:0},
      {k:"primeSpeed",l:"Prime speed",u:"mm/m",min:300,max:6000,st:100,dp:0}]},
-   {type:"note",t:"Z-hop is reserved for travel beyond 2× pitch. Adjacent dash moves stay level so they do not pull a tip from the button."},
+   {type:"note",t:"Every XY travel uses the configured Z-hop. Retraction remains limited to travel of at least 1.5 mm."},
    {type:"pair",items:[
      {k:"pspd",l:"Post feed",u:"mm/m",min:60,max:1200,st:20,dp:0},
      {k:"pflow",l:"Post flow",u:"×",min:0.6,max:2,st:0.05,dp:2}]},
