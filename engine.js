@@ -18,6 +18,7 @@
 const SQ3 = Math.sqrt(3) / 2;
 const FIL_AREA = Math.PI * Math.pow(1.75 / 2, 2);
 const RETRACT_MIN_TRAVEL = 1.5; // Core One profile's retract-before-travel floor
+const HOP_MIN_PITCHES = 2; // neighboring dash travels stay level
 const CREPE = [
   [1,0,1,1,0,0,1,0],[0,1,1,0,1,0,0,1],[1,1,0,0,1,1,0,0],[0,0,1,1,0,1,1,0],
   [1,0,0,1,1,0,0,1],[0,1,0,1,0,1,1,0],[1,1,0,0,1,0,0,1],[0,0,1,0,0,1,1,1]];
@@ -234,14 +235,18 @@ const postVol=()=>{
    dashes breaks that invariant; see NOTES § 3. */
 function toolpath(){
   const ds=allDashes(),vol=postVol(),ops=[],segs=[],seq={};
-  const st={dash:0,bridge:0,travel:0,travels:0,retracts:0,
+  const st={dash:0,bridge:0,travel:0,travels:0,retracts:0,hops:0,
     posts:0,nd:0,joins:0,ties:0};
   let cur=null;
   const travel=(xy,z)=>{
     if(cur&&Math.abs(cur.p[0]-xy[0])<1e-9&&Math.abs(cur.p[1]-xy[1])<1e-9&&Math.abs(cur.z-z)<1e-9) return;
     if(cur){
       const d=dist(cur.p,xy);st.travel+=d;
-      if(d>1e-9){st.travels++;if(d>=RETRACT_MIN_TRAVEL) st.retracts++;}
+      if(d>1e-9){
+        st.travels++;
+        if(d>=RETRACT_MIN_TRAVEL) st.retracts++;
+        if(d>P.pitch*HOP_MIN_PITCHES+1e-9) st.hops++;
+      }
       segs.push({a:cur.p,az:cur.z,b:xy,bz:z,k:"t"});
     }
     ops.push({o:"T",x:xy[0],y:xy[1],z});cur={p:xy,z};
@@ -420,7 +425,7 @@ function metrics(tp){
   const tDash=nd*moveTime((st.dash+st.bridge)/nd,P.ps/60,P.acc);
   const nT=Math.max(1,st.travels);
   const tMove=st.travels?nT*moveTime(st.travel/nT,P.ts/60,P.acc):0;
-  const tHop=st.travels*2*moveTime(Math.max(0,P.zhop),P.ts/60,P.acc);
+  const tHop=st.hops*2*moveTime(Math.max(0,P.zhop),P.ts/60,P.acc);
   const ret=Math.max(0,P.retract);
   const tRet=ret&&st.retracts
     ? st.retracts*ret*(60/P.retSpeed+60/P.primeSpeed):0;
@@ -436,7 +441,7 @@ function gcode(tp,startG="",endG=""){
   L.push("; Loomwright — printed weave");
   L.push(`; ${P.lattice} / ${P.pattern}  pitch ${P.pitch} mm  ${P.size} mm square  x${P.plies} ply  rot ${P.rot}deg`);
   L.push(`; button ${P.bd} x ${P.bh} mm   strand ${P.sw} x ${P.sh} mm   offset dashes ${P.offd?"on":"off"}`);
-  L.push(`; travel z-hop ${P.zhop} mm   retract ${P.retract} mm @ ${P.retSpeed}/${P.primeSpeed} mm/min`);
+  L.push(`; travel z-hop ${P.zhop} mm beyond ${HOP_MIN_PITCHES}x pitch   retract ${P.retract} mm @ ${P.retSpeed}/${P.primeSpeed} mm/min`);
   L.push("G21 ; mm","G90 ; absolute moves","M83 ; relative extrusion");
   if(P.printer==="coreone"){
     // Probe only the print area: rotation-aware swatch bbox plus margin.
@@ -458,7 +463,7 @@ function gcode(tp,startG="",endG=""){
       const xyMove=xyDist>1e-9;
       const doRet=xyMove&&xyDist>=RETRACT_MIN_TRAVEL&&retract>0;
       if(doRet) L.push(`G1 F${P.retSpeed} E-${nx(retract)}`);
-      if(cur&&xyMove&&zhop>0){
+      if(cur&&xyMove&&xyDist>P.pitch*HOP_MIN_PITCHES+1e-9&&zhop>0){
         const hopZ=Math.max(cur[2],op.z)+zhop;
         L.push(`G0 F${P.ts} Z${nx(hopZ)}`);
         L.push(`G0 X${nx(op.x+P.bed[0])} Y${nx(op.y+P.bed[1])}`);
@@ -584,7 +589,7 @@ function runCheck(log){
     else log(`  ok    ${name}  (${tp.ops.length} ops, ${m.posts} posts)`);
   }
   Object.assign(P,base,PRINTERS.coreone.defaults,
-    {printer:"coreone",bed:[125,110],pattern:"plain"});
+    {printer:"coreone",bed:[125,110],pattern:"twill"});
   const coreTp=toolpath(),coreM=metrics(coreTp);
   const coreG=gcode(coreTp,printerDef().start(),printerDef().end());
   const coreSeq=["M555 X","M862.1 P0.6","M109 R170","G28 ",
@@ -600,17 +605,23 @@ function runCheck(log){
     const retractLine=`G1 F${P.retSpeed} E-${P.retract}`;
     const primeLine=`G1 F${P.primeSpeed} E${P.retract}`;
     const firstRet=lines.indexOf(retractLine);
+    const firstHop=lines.findIndex(l=>l.startsWith(`G0 F${P.ts} Z`));
     const retracts=lines.filter(l=>l===retractLine).length;
     const primes=lines.filter(l=>l===primeLine).length;
+    const hops=lines.filter(l=>l.startsWith(`G0 F${P.ts} Z`)).length;
     if(firstTravel<0||firstRet<=firstTravel)
       coreErr="initial positioning was retracted or travel is missing";
     else if(!retracts||retracts!==primes)
       coreErr=`unbalanced travel retraction (${retracts} retract / ${primes} prime)`;
-    else if(!lines[firstRet+1].startsWith(`G0 F${P.ts} Z`)||
-            !lines[firstRet+2].startsWith("G0 X")||
-            !lines[firstRet+3].startsWith("G0 Z")||
-            lines[firstRet+4]!==primeLine)
-      coreErr="retract / lift / XY / lower / prime order";
+    else if(!lines[firstRet+1].startsWith(`G0 F${P.ts} X`)||
+            lines[firstRet+2]!==primeLine)
+      coreErr="short travel lifted instead of staying level";
+    else if(firstHop<0||hops!==coreTp.st.hops||
+            lines[firstHop-1]!==retractLine||
+            !lines[firstHop+1].startsWith("G0 X")||
+            !lines[firstHop+2].startsWith("G0 Z")||
+            lines[firstHop+3]!==primeLine)
+      coreErr="long-travel retract / lift / XY / lower / prime order";
   }
   if(!coreErr&&(coreM.clear<0.2||coreM.vgap<0.08))
     coreErr=`unsafe profile geometry (clear ${coreM.clear.toFixed(2)}, gap ${coreM.vgap.toFixed(2)})`;
