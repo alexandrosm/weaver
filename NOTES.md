@@ -606,23 +606,29 @@ bun engine.js --check                                      # invariant suite
 ### `index.html`
 
 The app: UI only, engine loaded via `<script src="engine.js">`; works over
-`file://`, no build step, no dependencies beyond a webfont. Live 3D preview —
-fabric mode renders the deposited result under a volume-conservation
-deposition model — flat w × h roads on support, round Ø√(4wh/π) strands in
-free air, layered cylindrical buttons, profile-aware shading, and cast shadows
-— with contact-anchored drawing so exaggerated z never opens fake gaps at the
-joints; toolpath mode shows the commanded tip
-path — plus the feasibility map, constraint gauges, editable biaxial lift plan,
-three pairwise triaxial lift tiles, and complete print controls. The named
-biaxial and triaxial pattern selectors are both always visible; the inactive
-family is dimmed, and choosing any pattern activates its matching lattice.
-Their independent settings persist without overloading semantics. The app
-exposes square size, rotation, selected-bed fit, weave and
-node dimensions, nozzle geometry, speeds, hop/retraction and its travel
-threshold, global model flow, per-pass fan, temperature, and volumetric limit.
-Generic, Core One PLA, and the physically successful MK4S PP profile are
-selectable. It outputs G-code or the complete parameter JSON consumed by the
-CLI and `fcexport.py`.
+`file://`, no build step, no dependencies beyond a webfont. The workspace uses
+a general slicer split: the left rail owns weave structure, dimensions,
+mechanisms, lift plan, and design space; the centre owns the live fabric or
+toolpath preview; the right rail owns the output profile, build plate, nozzle
+and bead, material, motion, printability, and generated G-code.
+
+Fabric mode renders the deposited result under a volume-conservation model —
+flat w × h roads on support, round Ø√(4wh/π) strands in free air, layered
+cylindrical buttons, profile-aware shading, and cast shadows — with
+contact-anchored drawing so exaggerated z never opens fake gaps at the joints.
+Toolpath mode shows the commanded tip path. The named biaxial and triaxial
+pattern selectors are both always visible; the inactive family is dimmed, and
+choosing any pattern activates its matching lattice. Their independent settings
+persist without overloading semantics.
+
+Output profiles now identify printer, filament, and nozzle separately in the
+right rail. Generic, the verified Core One 0.6 / Prusament PLA setup, and the
+physically successful MK4S 0.5 / Fiberlogy PP setup remain the supported
+bundles. Selecting an output profile applies its bed, bead, nozzle, material,
+and process settings without replacing the weave's lattice, pattern, pitch,
+button geometry, mechanisms, size, or rotation. Generic leaves the process
+values editable for a custom machine. The app outputs G-code or the complete
+parameter JSON consumed by the CLI and `fcexport.py`.
 
 ### `fcexport.py`
 
