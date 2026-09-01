@@ -227,34 +227,85 @@ printed bridges because the reverse sweep keeps the region ahead of the nozzle
 unprinted. Any dash reordering must preserve a clean sweep front or hop above
 *H* + *h*.
 
-### Experimental curved/link scheduler
+### Experimental topology compiler
 
-The seven topology studies are now complete engine inputs rather than preview
-art. `topologyModel()` scales each sampled diagram into the requested field,
-maps both branches of every crossing to arclength, and partitions each open or
-closed strand into cyclic low/high runs. Open ends are forced onto the low
-plane. Closed components retain their declared crossing word.
+The atlas contains seven **different structural classes**, not seven variants of
+one weave. In the strict periodic sense, a weave is made from open threads whose
+motif closes only on a thickened torus. A finite knot, a Brunnian link, and a
+polycatenane sheet do not acquire textile identity merely because their
+projections look woven. The UI and report therefore name the class before the
+motif:
 
-High runs receive transition risers at every low/high boundary. If a high run
-exceeds the configured support spacing (`pitch` in the shared parameter model),
-extra bed-founded risers subdivide it; candidates are kept away from crossings
-and from the nozzle envelope of existing risers. The operation order is
-deliberately conservative:
+| study | structural class | diagram invariant | intended question |
+|---|---|---|---|
+| sinusoidal | finite deformed biaxial weave | 6 × 6 open paths, 36 plain-parity crossings | does added centre-line arclength provide recoverable in-plane reserve? |
+| annular | finite radial weave | 4 closed rings × 8 open spokes, 32 alternating crossings | how does a fixed-count radial coupon expose density gradient and shear? |
+| Celtic | repeated knot coupon | four disjoint trefoils, three self-crossings each | can closed self-crossing components be printed without calling ornament a sheet? |
+| figure-eight | closed-braid knot coupon | closure of `(σ₁σ₂⁻¹)²`, one component, four self-crossings | can a braid word and its standard closure become one physical strand? |
+| chainmail | finite polycatenane network | staggered 3–4–3 patch, 10 rings, 12 Hopf-linked pairs | do independently closed rings release as a mobile 4-in-1 network? |
+| leno | finite true-leno weave | 3 doup/skeleton pairs × 4 wefts; partners cross between picks | can paired warps grip each pick without a mock-leno substitution? |
+| Borromean | Brunnian link coupon | closure of `(σ₁σ₂⁻¹)³`, 3 components, pairwise linking zero | does collective linkage survive while every two-component sublink remains trivial? |
+
+Every registry entry carries an explicit design contract: structural class,
+diagram identity, mechanical hypothesis, print strategy, principal unresolved
+risk, one technical source, and machine-checkable facts. The facts cover
+open/closed component counts, histograms of self- and pair-crossing counts,
+alternation where claimed, and pairwise linking-number magnitudes where those
+distinguish the object. `paths.length === components` is required: a decorative
+closure stroke is not allowed to masquerade as part of a physical component.
+
+`topologyModel()` scales the sampled diagram into the requested coupon, maps
+both branches of every crossing to arclength, and compiles **local overpass
+windows**. A strand stays on the low plane except around a crossing it owns.
+For crossing angle *θ*, the target half-window is
+
+```
+c = D/2 + w/2 + 0.10 mm
+half-window = max(2w, 0.8 mm, c / max(sin θ, 0.10))
+```
+
+and is capped at 38% of the arclength to the nearest crossing or open edge.
+The angle term keeps the low-level roads separated after a shallow crossing;
+the cap prevents one overpass from swallowing the next crossing. The quality
+report independently exposes the remaining crossing interval, so a dense
+diagram fails visibly rather than silently merging windows.
+
+Exactly two transition risers bracket each high run. There are **no**
+bed-founded, sacrificial, or spacing-driven helper posts. Such a prop would weld
+an extra edge from a strand to the bed-founded network and change the topology
+being studied. This reverses the earlier generic “maximum support spacing”
+scheme. Long unsupported spans now remain honest measurements and warnings.
+
+The operation order is deliberately conservative:
 
 1. deposit every low curve and its level-owned endpoint buttons;
-2. deposit standalone foundation buttons and grow every riser;
-3. deposit every high curve, adding top buttons wherever it crosses a riser.
+2. grow every topology-owned transition riser from the low plane;
+3. deposit every local high overpass and its high-level endpoint buttons.
 
-Every disconnected move rises above the complete current-ply z stack before
-moving in XY and descends only at its destination. This scheduler therefore
-does not rely on the straight lattice's reverse-sweep front. The same `T`, `D`,
-and `S` operation grammar feeds browser rendering, plain G-code, and
-FullControl.
+Every disconnected move rises above the full z stack before moving in XY and
+descends only at its destination. The scheduler does not rely on the straight
+lattice's reverse-sweep front. The same `T`, `D`, and `S` operation grammar
+feeds browser rendering, plain G-code, and FullControl.
 
-These routes are labelled **EXPERIMENTAL** in the app, report, G-code header,
-saved configuration, and CLI selection. They are implemented and checked
-computationally, but none has yet been physically printed. Experimental is a
-validation state, not a missing-code state.
+Experimental coupons are **single-ply by contract**. Pitch, selvedge, offset,
+tack, and ply-gap controls belong to the straight-family grammar; the app
+disables them and the engine rejects `plies != 1` instead of inventing an
+unvalidated cross-topology stacking rule. A checked atlas default also applies
+the reference 0.90 mm button and 0.40 mm strand width; button height is raised
+as needed to preserve at least 0.13 mm over the free-strand diameter at the
+active layer height. This prevents a Core One or MK4 output profile from
+silently donating its much larger straight-weave button to an experimental
+coupon. The experimental report adds non-crossing road separation, minimum bend
+radius, crossing interval, open-path reserve, reference geometry, recommended
+coupon size, and an explicit count of zero foundation supports. Parameter edits
+remain allowed, but the report identifies departure from the checked geometry
+and evaluates the resulting toolpath on its actual dimensions.
+
+Maturity is stated as three separate facts: diagram contract checked, toolpath
+invariants checked, physical print pending. The app, report, G-code header,
+configuration, CLI, and atlas retain the **EXPERIMENTAL** label until a real
+coupon has been printed, released, and inspected. Experimental means a known
+validation boundary, not missing code and not evidence of physical success.
 
 ### Why endpoint buttons are cheap
 
@@ -374,11 +425,23 @@ the same coverage) beats halving the pitch (4× cost).
   sequences, riser sites strictly pairwise distinct, exactly two correctly
   placed level-owned endpoint dots per dash, a sane op stream, consistent
   stationary-volume accounting, and finite metrics.
-- `bun engine.js --check` builds all seven experimental topologies end to end:
-  finite sampled curves, exact crossing counts and branch ownership, cyclic
-  low/high run assignment, supported high runs, separate riser counts, safe-z
-  horizontal travel, finite metrics, and EXPERIMENTAL labels in both report
-  and G-code.
+- `bun engine.js --check` builds all seven experimental studies at their
+  recommended coupon sizes. It checks each design contract's open/closed
+  component count, self/pair crossing histogram, claimed alternating word,
+  and pairwise linking-number profile; the physical path count must equal the
+  declared component count.
+- The same suite checks that every crossing branch lands on its declared
+  low/high run, every high run has exactly two topology-owned transition
+  risers, no foundation support exists, horizontal travel stays at safe z,
+  multi-ply input is rejected, all metrics are finite, and report/G-code
+  headers carry the class and EXPERIMENTAL status. At each checked reference
+  default (0.90 mm button, 0.40 mm strand, single ply, and at least 0.13 mm
+  vertical gap), post clearance and unrelated-road separation are at least
+  0.10 mm, bend radius is at least one strand width, crossing interval exceeds
+  the button-plus-road width, and free bridge span is at most 4.5 mm.
+- The checked atlas defaults are rebuilt under both Core One PLA and MK4S PP
+  profile geometry. Each profile-adapted button height must retain those same
+  clearance, curvature, span, vertical-gap, and bed-fit bounds.
 - The feasibility map's analytic model matches full geometry rebuilds to three
   decimals at sampled points.
 
@@ -407,11 +470,15 @@ the same coverage) beats halving the pitch (4× cost).
 
 **Still assumed:**
 
-- That the crossings stay free.
-- That bridges do not sag into the layer below.
-- That the crimp is enough to lock rather than pull flat.
-- Everything about two-ply. Ply 2's low dashes bridge over ply 1's structure
-  rather than sitting on the bed, and the metrics only describe a single ply.
+- That every experimental crossing releases rather than welding. A correct
+  diagram and collision-free commanded path cannot establish physical freedom.
+- That each experimental bridge stays above the lower road, especially the
+  4.11 mm Borromean overpass.
+- That the proposed mechanisms survive handling: sinusoidal reserve may become
+  slip, leno buttons may become rigid locks, and chainmail contacts may weld.
+- That straight-family crimp is enough to lock rather than pull flat.
+- Everything about straight-family two-ply. Experimental topologies reject
+  multi-ply outright; they do not inherit this assumption.
 
 ---
 
@@ -444,6 +511,29 @@ printable triaxial modes separate the transition/bridge trade cleanly:
 These are computed comparisons, not print validation. The shared three-band
 button construction has printed successfully, but no complete triaxial mode has
 been physically validated; all three require small swatches.
+
+The experimental defaults below are computational envelopes for the reference
+0.90 mm button, 0.40 mm strand, 0.20 mm layer, 0.45 mm button height, and
+generic 0.8 mm-flat / 120° nozzle model. They are not successful-print claims.
+The atlas preserves the selected output profile's layer height and adapts button
+height to retain 0.13 mm vertical gap. Large defaults, especially chainmail,
+are intentional: shrinking a diagram while holding nozzle and button
+dimensions fixed collapses post and road clearance.
+
+| study | default size | crossings | risers | longest bridge | post clearance | unrelated road gap | min bend radius |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| sinusoidal | 30 mm | 36 | 72 | 2.12 mm | +0.30 mm | +0.29 mm | 2.97 mm |
+| annular | 48 mm | 32 | 64 | 0.70 mm | +0.28 mm | +0.38 mm | 7.69 mm |
+| Celtic trefoils | 24 mm | 12 | 24 | 0.70 mm | +0.31 mm | +0.38 mm | 1.84 mm |
+| figure-eight braid | 26 mm | 4 | 8 | 2.76 mm | +2.37 mm | +0.11 mm | 0.48 mm |
+| European 4-in-1 | 96 mm | 24 | 48 | 0.95 mm | +0.27 mm | +0.38 mm | 7.02 mm |
+| true leno | 28 mm | 33 | 66 | 0.70 mm | +0.29 mm | +0.14 mm | 2.32 mm |
+| Borromean | 34 mm | 6 | 12 | 4.11 mm | +3.73 mm | +0.24 mm | 0.55 mm |
+
+Road separation excludes the intentional projection overlap while its owning
+branch is physically high; it still measures nonlocal same-level approaches.
+Minimum bend radius covers local neighbours that are deliberately excluded from
+that nonlocal road-gap metric.
 
 ---
 
@@ -492,6 +582,25 @@ wrong.
     of the same assumption.
     (The second engine has since been removed; the check that remains,
     `--check`, asserts invariants rather than agreement.)
+11. **Every atlas card can share one “experimental weave” story.** False.
+    Sinusoidal and annular coupons are finite weaves; trefoils and the
+    figure-eight are knots; Borromean is a Brunnian link; chainmail is a
+    polycatenane network. Structural class and invariant now precede styling.
+12. **Long high runs can be made printable with generic bed-founded supports.**
+    Printable, perhaps; topology-preserving, no. Every such prop adds a welded
+    connection to the bed-founded network. High geometry is now localized at
+    the crossing angle and receives transition risers only; excessive spans
+    remain warnings.
+13. **A braid path plus separately drawn closure curves is a closed braid.**
+    False in the emitted object. Coincident endpoints produced duplicate seam
+    material while the physical path list still contained disconnected
+    strokes. Standard closure lanes are now merged into the actual component
+    cycles before crossings or runs are computed.
+14. **The straight-family ply and pitch controls generalize automatically.**
+    False. Pitch became an undocumented support-spacing knob and stacked
+    topology coupons had no defined component relation. Those controls are
+    disabled in the experimental UI, and the engine rejects experimental
+    multi-ply input.
 
 ---
 
@@ -625,9 +734,12 @@ endpointDotVol(), riserVol()   volume-complete three-band button construction
 toolpath()                     two-pass op stream + per-ply pass boundaries
 metrics(), report()            geometry, bed, flow and time constraints
 gcode()                        profiles + flow/fan/travel controls → G-code
-topologyStudies(), topologyModel()  seven sampled link diagrams → cyclic runs and supports
-topologyToolpath()             conservative low / riser / high op scheduler
-topologyMetrics(), topologyReport() experimental constraints and labelled report
+topologyStudies()              seven sourced diagrams + design/verification contracts
+topoDiagramFacts()             component, crossing, alternation, and linking profiles
+topologyModel()                local overpass windows + transition-only risers
+topoGeometryQuality()          road gap, bend radius, crossing interval, path reserve
+topologyToolpath()             conservative low / transition / high op scheduler
+topologyMetrics(), topologyReport() experimental constraints and design dossier
 runCheck()                     production + seven-topology + printer-profile suite
 ```
 
@@ -635,8 +747,8 @@ runCheck()                     production + seven-topology + printer-profile sui
 bun engine.js --report
 bun engine.js --pattern plain --pitch 3.6 --gcode swatch.gcode
 bun engine.js --lattice triaxial --triaxial-pattern directional --report
-bun engine.js --topology chainmail --size 30 --report
-bun engine.js --topology borromean --size 30 --gcode borromean.gcode
+bun engine.js --topology chainmail --size 96 --report
+bun engine.js --topology borromean --size 34 --gcode borromean.gcode
 bun engine.js --draft figured.json --gcode figured.gcode   # custom lift plan
 bun engine.js --json                                       # metrics for scripts
 bun engine.js --check                                      # invariant suite
@@ -658,13 +770,22 @@ contact-anchored drawing so exaggerated z never opens fake gaps at the joints.
 Toolpath mode shows the commanded tip path. Knot atlas mode compares and
 selects seven engine-owned experimental geometries: sinusoidal biaxial,
 annular, repeated Celtic trefoils, a figure-eight braid closure, European
-four-in-one chainmail, leno, and Borromean rings. Selecting a card rebuilds the
-complete op stream and enables the normal report, Fabric, Toolpath, Generate,
-Download, configuration, CLI, and FullControl routes. The app keeps an
-EXPERIMENTAL badge visible for any such selection. Choosing a biaxial/triaxial
-structure or a production preset returns to the straight-family engine. The
-pattern rail renders only the family compatible with that selected straight
-structure; each family's independent selection remains stored.
+four-in-one chainmail, true leno, and Borromean rings. The atlas explicitly
+separates finite weaves, knots, and links. Each card exposes its invariant,
+mechanical hypothesis, print strategy, risk, technical source, physical
+component boundary, and computationally checked default size.
+
+Selecting a card applies that study's checked single-ply size, 0.90 mm button,
+0.40 mm strand, and layer-height-adapted button height, then rebuilds the
+complete op stream. The left rail replaces the inapplicable lift-plan and
+straight design-space panels with the same source-grounded dossier; pitch,
+selvedge, offset, tack, and ply controls are disabled rather than repurposed.
+The report rail adds topology-specific clearance, nonlocal road-gap, curvature,
+crossing-interval, reserve, and zero-foundation-support facts. Fabric,
+Toolpath, Generate, Download, configuration, CLI, and FullControl routes remain
+available, while the EXPERIMENTAL badge and physical-validation warning remain
+visible. Choosing a biaxial/triaxial structure or production preset returns to
+the straight-family engine and restores those controls.
 
 Output profiles now identify printer, filament, and nozzle separately in the
 right rail. Generic, the verified Core One 0.6 / Prusament PLA setup, and the
@@ -716,11 +837,15 @@ python print.py pp.gcode --host <printer-ip> --key <key> --go
 - **A new lattice** is an entry in `families()` plus a branch in `highAt()`.
   Anything expressible as families of parallel lines with a pairwise
   over/under rule will work unmodified downstream.
-- **A new curved/link topology** belongs in `topologyStudies()`: sampled open
-  or closed strands, robust pairwise intersections, explicit branch ownership,
-  an exact crossing-count assertion, and an experimental label. The generic
-  cyclic run splitter, support placer, safe lifted scheduler, metrics, browser,
-  CLI, G-code, and FullControl routes then apply unmodified.
+- **A new curved/link topology** belongs in `topologyStudies()`. It needs
+  sampled open or closed physical components, robust intersections, explicit
+  branch ownership, `paths.length === components`, a recommended safe coupon
+  size, and a complete contract (`kind`, `identity`, `mechanism`, `strategy`,
+  `risk`, `source`, `verify`). `verify` must assert the component boundary and
+  crossing histograms; add alternation and pairwise linking profiles whenever
+  they are part of the claimed identity. The generic local-overpass compiler,
+  transition-only scheduler, quality metrics, browser, CLI, G-code, and
+  FullControl routes then apply. Do not add foundation props or infer multi-ply.
 - **Pile** would be a third pass emitting arcs between chosen post pairs. It
   doesn't touch the in-plane geometry at all.
 - **Stuffer threads** (Bedford cord) would be a family that never lifts, with the
@@ -750,3 +875,34 @@ python print.py pp.gcode --host <printer-ip> --key <key> --go
 - **Weave structures generally** — leno, Bedford cord, honeycomb, huckaback,
   crepe, damask, lampas, and 3D orthogonal preforms were all considered. See §7
   and §8 for which survived contact with the constraints.
+- **Periodic-weave taxonomy** — Sonia Mahmoudi, *On the classification of
+  periodic weaves and universal cover of links in thickened surfaces*,
+  <https://arxiv.org/html/2009.13896>. The open-thread/thickened-torus
+  definition is why knot and link coupons are not labelled periodic weaves.
+- **Textile topology and mechanics** — Dresselhaus et al., *Textiles: from
+  twisted yarn to topology and mechanics*,
+  <https://arxiv.org/html/2604.09005v1>. Grounds centre-curve, curvature,
+  topology-under-smooth-deformation, crimp, and shear language.
+- **Annular weaving** — Chen and Guo, analysis of shear deformation in annular
+  woven fabrics, <https://doi.org/10.4028/www.scientific.net/AMR.331.198>.
+  Production annular cloth uses unequal picks and shear; this fixed-count
+  coupon deliberately exposes rather than solves the density gradient.
+- **Closed braids** — Dale Rolfsen, *Tutorial on the braid groups*,
+  <https://arxiv.org/html/1010.4051>. Standard closure connects braid endpoints
+  without introducing new braid interactions.
+- **Celtic and alternating knots** — Connor and Ward, *Celtic Knot Theory*,
+  <https://webhomes.maths.ed.ac.uk/~v1ranick/knots/celtic.pdf>. Used to keep
+  ornamental alternating knot claims separate from textile-sheet claims.
+- **European 4-in-1 geometry** — Alexander R. Klotz, *Geometric considerations
+  for energy minimization of topological links and chainmail networks*,
+  <https://arxiv.org/html/2507.20903#S4>. Grounds the staggered square network,
+  row-alternating ring tilt, valence four, and sub-two-radius spacing.
+- **True leno geometry** — US10023981B2,
+  <https://patents.google.com/patent/US10023981B2/en>. Used only for the
+  doup/skeleton pair wrapping a weft and resisting slip; it is not evidence for
+  the printed locking force.
+- **Borromean braid representation** — Jozef H. Przytycki, *From 3-moves to
+  Lagrangian tangles and cubic skein modules*,
+  <https://arxiv.org/abs/math/0405248>. Supplies the
+  `(σ₁σ₂⁻¹)³` three-component closure representation; the engine separately
+  asserts zero pairwise linking.
