@@ -171,7 +171,7 @@ const PRINTERS={
 const printerDef=()=>PRINTERS[P.printer]||PRINTERS.generic;
 
 const P = {
-  lattice:"biaxial", pattern:"twill", triPattern:"cyclic", pitch:3.6, size:30, rot:45,
+  topology:"straight", lattice:"biaxial", pattern:"twill", triPattern:"cyclic", pitch:3.6, size:30, rot:45,
   bd:0.9, bh:0.45, sw:0.40, sh:0.20,
   offd:false, offFrac:0.40, ovs:0.30, plies:1, pgap:0.25, tack:3, edge:true, join:true,
   nflat:0.80, ncone:120,
@@ -180,10 +180,12 @@ const P = {
   zhop:0, retract:0, retMin:DEFAULT_RETRACT_MIN_TRAVEL, retSpeed:2400, primeSpeed:2400,
   ht:230, bt:100, printer:"generic", bed:[110,110], draft:CREPE.map(r=>r.slice())
 };
+const isExperimental=()=>P.topology!=="straight";
 function printBounds(){
   const a=P.rot*Math.PI/180;
   const factor=Math.abs(Math.cos(a))+Math.abs(Math.sin(a));
-  const margin=2*P.pitch,modelHalf=P.size*factor/2,probeHalf=modelHalf+margin;
+  const margin=isExperimental()?Math.max(2,P.bd*2):2*P.pitch;
+  const modelHalf=P.size*factor/2,probeHalf=modelHalf+margin;
   const bedHalf=Math.min(P.bed[0],P.bed[1]);
   return {factor,margin,modelHalf,probeHalf,
     maxSize:Math.max(0,2*(bedHalf-margin)/factor),
@@ -235,7 +237,8 @@ function highAt(A,B,rule){
   const wo=rule(i,j);
   return A.f===1?wo:!wo;
 }
-const activePattern=()=>P.lattice==="triaxial"?P.triPattern:P.pattern;
+const activePattern=()=>isExperimental()?P.topology:
+  (P.lattice==="triaxial"?P.triPattern:P.pattern);
 function buildLines(){
   const half=P.size/2,out=[];
   families().forEach((F,f)=>{
@@ -351,6 +354,7 @@ const riserVol=(from,to,zf,zt)=>{
    Opposite pass directions still preserve disjoint riser ownership and the
    reverse-sweep z-safety invariant; see NOTES § 3. */
 function toolpath(){
+  if(isExperimental()) return topologyToolpath(topologyStudy(P.topology));
   const ds=allDashes(),ops=[],segs=[],seq={},passStarts=[];
   const st={dash:0,bridge:0,travel:0,travels:0,retracts:0,
     posts:0,dots:0,buttonVol:0,nd:0,joins:0,ties:0};
@@ -544,6 +548,7 @@ const moveTime=(L,v,a)=>{
 };
 const nozHalf=()=>(P.nflat+2*Math.max(0,P.bh-P.sh)*Math.tan(P.ncone*Math.PI/360))/2;
 function metrics(tp){
+  if(tp.experimental) return topologyMetrics(tp);
   const ds=tp.ds,st=tp.st,area=Math.pow(P.size/10,2);
   let longest=0;const lows=[],posts=[],spans=[];
   for(const D of ds){
@@ -589,16 +594,25 @@ function metrics(tp){
 }
 function gcode(tp,startG="",endG=""){
   const ePerMm=P.sw*P.sh/FIL_AREA,L=[];
-  L.push("; Loomwright — printed weave");
-  L.push(`; ${P.lattice} / ${activePattern()}  pitch ${P.pitch} mm  ${P.size} mm square  x${P.plies} ply  rot ${P.rot}deg`);
-  L.push(`; button ${P.bd} x ${P.bh} mm   strand ${P.sw} x ${P.sh} mm   offset dashes ${P.offd?"on":"off"}`);
+  L.push(`; Loomwright — ${isExperimental()?"EXPERIMENTAL topology":"printed weave"}`);
+  if(isExperimental()){
+    const study=topologyStudy(P.topology);
+    L.push(`; EXPERIMENTAL — ${study.title}; generated geometry is not physically validated`);
+    L.push(`; ${study.components} components  ${study.crossings.length} crossings  ${P.size} mm field  x${P.plies} ply  rot ${P.rot}deg`);
+  } else {
+    L.push(`; ${P.lattice} / ${activePattern()}  pitch ${P.pitch} mm  ${P.size} mm square  x${P.plies} ply  rot ${P.rot}deg`);
+  }
+  if(isExperimental())
+    L.push(`; button ${P.bd} x ${P.bh} mm   strand ${P.sw} x ${P.sh} mm   max support spacing ${P.pitch} mm`);
+  else
+    L.push(`; button ${P.bd} x ${P.bh} mm   strand ${P.sw} x ${P.sh} mm   offset dashes ${P.offd?"on":"off"}`);
   L.push(`; model flow ${(P.flow*100).toFixed(0)}%   pass fans ${P.fan1}/${P.fan}%`);
   L.push(`; travel z-hop ${P.zhop} mm   retract ${P.retract} mm above ${P.retMin} mm @ ${P.retSpeed}/${P.primeSpeed} mm/min`);
   L.push("G21 ; mm","G90 ; absolute moves","M83 ; relative extrusion");
   if(printerDef().probe){
     const bounds=printBounds(),h=bounds.probeHalf;
     L.push(`M555 X${Math.max(0,P.bed[0]-h).toFixed(1)} Y${Math.max(0,P.bed[1]-h).toFixed(1)}`+
-           ` W${(2*h).toFixed(1)} H${(2*h).toFixed(1)} ; probe print bounds plus ${(2*P.pitch).toFixed(1)} mm margin`);
+           ` W${(2*h).toFixed(1)} H${(2*h).toFixed(1)} ; probe print bounds plus ${bounds.margin.toFixed(1)} mm margin`);
   } else {
     L.push(`M140 S${P.bt}`,`M104 S${P.ht}`,`M190 S${P.bt}`,`M109 S${P.ht}`);
   }
@@ -621,7 +635,7 @@ function gcode(tp,startG="",endG=""){
       const xyMove=xyDist>1e-9;
       const doRet=xyMove&&xyDist>=Math.max(0,P.retMin)&&retract>0;
       if(doRet) L.push(`G1 F${P.retSpeed} E-${nx(retract)}`);
-      if(cur&&xyMove&&zhop>0){
+      if(cur&&xyMove&&zhop>0&&!op.safe){
         const hopZ=Math.max(cur[2],op.z)+zhop;
         L.push(`G0 F${P.ts} Z${nx(hopZ)}`);
         L.push(`G0 X${nx(op.x+P.bed[0])} Y${nx(op.y+P.bed[1])}`);
@@ -643,6 +657,7 @@ function gcode(tp,startG="",endG=""){
   return L.join("\n")+"\n";
 }
 function report(m){
+  if(m.experimental) return topologyReport(m);
   const warn=[];
   if(m.clear<0)
     warn.push(`NOZZLE CLEARANCE -- the tip will clip middle risers. Needs pitch >= ${m.minPitch.toFixed(2)} mm, or a smaller/shorter button, or a sharper nozzle.`);
@@ -701,6 +716,608 @@ function namedMetrics(m){
   const out={};
   for(const [k,v] of Object.entries(m)) out[JSON_NAMES[k]||k]=v;
   return out;
+}
+
+/* ==========================================================================
+ * experimental topology studies — one diagram grammar, preview and toolpath
+ *
+ * Every crossing has one explicit upper branch. The printable route converts
+ * each sampled strand into low/high arclength runs, prints every low run
+ * first, constructs risers separately, then prints high runs. All disconnected
+ * travel is lifted above the complete z stack; it does not rely on the straight
+ * weave's reverse-sweep proof. These paths are implemented but not yet
+ * physically validated, so every output remains labelled EXPERIMENTAL.
+ * ========================================================================== */
+const TOPO_TAU=Math.PI*2;
+const topoCross2=(a,b)=>a[0]*b[1]-a[1]*b[0];
+function topoSample(count,closed,fn){
+  const den=closed?count:count-1,out=[];
+  for(let i=0;i<count;i++) out.push(fn(i/den));
+  return out;
+}
+const topoPath=(id,family,points,closed=false,meta={})=>
+  ({id,family,points,closed,meta});
+function topoIntersections(paths){
+  const segs=[],out=[],seen=new Set(),eps=1e-8;
+  paths.forEach((path,pathIndex)=>{
+    if(path.meta.crossings===false) return;
+    const count=path.closed?path.points.length:path.points.length-1;
+    for(let seg=0;seg<count;seg++)
+      segs.push({path:pathIndex,seg,count,a:path.points[seg],
+        b:path.points[(seg+1)%path.points.length]});
+  });
+  for(let i=0;i<segs.length;i++) for(let j=i+1;j<segs.length;j++){
+    const A=segs[i],B=segs[j],pathA=paths[A.path];
+    if(A.path===B.path){
+      const d=Math.abs(A.seg-B.seg);
+      if(d<=1||(pathA.closed&&d===A.count-1)) continue;
+    }
+    if(Math.max(A.a[0],A.b[0])+eps<Math.min(B.a[0],B.b[0])||
+       Math.max(B.a[0],B.b[0])+eps<Math.min(A.a[0],A.b[0])||
+       Math.max(A.a[1],A.b[1])+eps<Math.min(B.a[1],B.b[1])||
+       Math.max(B.a[1],B.b[1])+eps<Math.min(A.a[1],A.b[1])) continue;
+    const r=[A.b[0]-A.a[0],A.b[1]-A.a[1]];
+    const s=[B.b[0]-B.a[0],B.b[1]-B.a[1]],den=topoCross2(r,s);
+    if(Math.abs(den)<eps) continue;
+    const q=[B.a[0]-A.a[0],B.a[1]-A.a[1]];
+    const u=topoCross2(q,s)/den,v=topoCross2(q,r)/den;
+    if(u < -eps||u > 1+eps||v < -eps||v > 1+eps) continue;
+    const p=[A.a[0]+u*r[0],A.a[1]+u*r[1]];
+    const pair=A.path<=B.path?`${A.path}:${B.path}`:`${B.path}:${A.path}`;
+    const key=`${pair}:${Math.round(p[0]*1e5)}:${Math.round(p[1]*1e5)}`;
+    if(seen.has(key)) continue;
+    seen.add(key);
+    const az=A.a[2]||0,bz=A.b[2]||0,cz=B.a[2]||0,dz=B.b[2]||0;
+    out.push({a:A.path,b:B.path,p,pa:A.seg+u,pb:B.seg+v,
+      ta:r,tb:s,za:az+u*(bz-az),zb:cz+v*(dz-cz)});
+  }
+  return out;
+}
+function topoFinalize(study,resolver){
+  const crossings=topoIntersections(study.paths),groups=new Map();
+  for(const crossing of crossings){
+    const key=crossing.a<=crossing.b
+      ?`${crossing.a}:${crossing.b}`:`${crossing.b}:${crossing.a}`;
+    if(!groups.has(key)) groups.set(key,[]);
+    groups.get(key).push(crossing);
+  }
+  for(const group of groups.values()){
+    group.sort((a,b)=>(a.pa-b.pa)||(a.pb-b.pb));
+    group.forEach((crossing,rank)=>{
+      crossing.over=resolver?resolver(crossing,rank,group,study.paths)
+        :(rank%2?"b":"a");
+    });
+  }
+  return Object.assign(study,{crossings,printable:true,experimental:true,
+    recommendedSize:60});
+}
+const topoBranch=(crossing,path,paths)=>paths[crossing.a]===path?"a":"b";
+
+function topoSinusoidalStudy(){
+  const paths=[],n=6,pitch=0.25,amp=0.075,wave=0.72;
+  for(let i=0;i<n;i++){
+    const off=(i-(n-1)/2)*pitch;
+    paths.push(topoPath(`weft-${i}`,0,topoSample(96,false,u=>{
+      const x=-0.84+1.68*u;
+      return [x,off+amp*Math.sin(TOPO_TAU*x/wave)];
+    }),false,{kind:"weft",index:i}));
+    paths.push(topoPath(`warp-${i}`,1,topoSample(96,false,u=>{
+      const y=-0.84+1.68*u;
+      return [off+amp*Math.sin(TOPO_TAU*y/wave+Math.PI/2),y];
+    }),false,{kind:"warp",index:i}));
+  }
+  return topoFinalize({
+    id:"sinusoidal",title:"Sinusoidal biaxial",tag:"curved plain weave",
+    note:"Both families bend; the crossing word remains plain weave.",
+    paths,expectedCrossings:36,components:12
+  },(crossing,rank,group,all)=>{
+    const a=all[crossing.a],b=all[crossing.b];
+    const warp=a.meta.kind==="warp"?a:b,weft=warp===a?b:a;
+    const over=(warp.meta.index+weft.meta.index)%2===0?warp:weft;
+    return topoBranch(crossing,over,all);
+  });
+}
+
+function topoAnnularStudy(){
+  const paths=[],radii=[0.27,0.43,0.59,0.75],spokes=8;
+  radii.forEach((radius,index)=>paths.push(topoPath(`ring-${index}`,0,
+    topoSample(128,true,u=>{
+      const a=TOPO_TAU*u;return [radius*Math.cos(a),radius*Math.sin(a)];
+    }),true,{kind:"ring",index})));
+  for(let index=0;index<spokes;index++){
+    const base=index*TOPO_TAU/spokes;
+    paths.push(topoPath(`spoke-${index}`,1,topoSample(96,false,u=>{
+      const radius=0.15+0.67*u,a=base+0.22*(u-0.5);
+      return [radius*Math.cos(a),radius*Math.sin(a)];
+    }),false,{kind:"spoke",index}));
+  }
+  return topoFinalize({
+    id:"annular",title:"Annular weave",tag:"rings + spiral spokes",
+    note:"Closed circular wefts cross an even set of gently twisting spokes.",
+    paths,expectedCrossings:32,components:12
+  },(crossing,rank,group,all)=>{
+    const a=all[crossing.a],b=all[crossing.b];
+    const ring=a.meta.kind==="ring"?a:b,spoke=ring===a?b:a;
+    const over=(ring.meta.index+spoke.meta.index)%2===0?ring:spoke;
+    return topoBranch(crossing,over,all);
+  });
+}
+
+function topoCelticStudy(){
+  const paths=[],centres=[[-0.38,-0.38],[0.38,-0.38],[-0.38,0.38],[0.38,0.38]];
+  centres.forEach(([cx,cy],index)=>paths.push(topoPath(`trefoil-${index}`,index%3,
+    topoSample(160,true,u=>{
+      const t=TOPO_TAU*u,scale=0.34;
+      return [cx+scale*(Math.sin(t)+2*Math.sin(2*t))/3,
+        cy+scale*(Math.cos(t)-2*Math.cos(2*t))/3,-Math.sin(3*t)];
+    }),true,{kind:"trefoil",index})));
+  return topoFinalize({
+    id:"celtic",title:"Periodic Celtic tile",tag:"repeated trefoil links",
+    note:"A closed alternating trefoil motif repeats as a four-cell ornament.",
+    paths,expectedCrossings:12,components:4
+  },crossing=>crossing.za>=crossing.zb?"a":"b");
+}
+
+function topoBraidStudy(id,title,tag,n,word,note,expectedCrossings){
+  const bottom=-0.68,top=0.68,slots=Array.from({length:n},(_,i)=>
+    n===1?0:-0.55+i*1.1/(n-1));
+  const points=Array.from({length:n},(_,i)=>[[slots[i],bottom]]);
+  const order=Array.from({length:n},(_,i)=>i),events=[];
+  const push=(strand,x,y)=>{
+    const list=points[strand],last=list[list.length-1];
+    if(!last||Math.hypot(last[0]-x,last[1]-y)>1e-9) list.push([x,y]);
+  };
+  const step=(top-bottom)/(word.length+1);
+  for(let k=0;k<word.length;k++){
+    const generator=word[k],slot=Math.abs(generator)-1;
+    if(slot<0||slot>=n-1) throw new Error(`invalid braid generator ${generator}`);
+    const cy=bottom+(k+1)*step,y0=cy-step*0.34,y1=cy+step*0.34;
+    for(let s=0;s<n;s++) push(order[s],slots[s],y0);
+    const left=order[slot],right=order[slot+1];
+    for(let q=1;q<=15;q++){
+      const u=q/15,e=(1-Math.cos(Math.PI*u))/2,y=y0+(y1-y0)*u;
+      for(let s=0;s<n;s++){
+        let x=slots[s];
+        if(s===slot) x=slots[slot]+(slots[slot+1]-slots[slot])*e;
+        else if(s===slot+1) x=slots[slot+1]+(slots[slot]-slots[slot+1])*e;
+        push(order[s],x,y);
+      }
+    }
+    events.push({p:[(slots[slot]+slots[slot+1])/2,cy],
+      overStrand:generator>0?left:right});
+    order[slot]=right;order[slot+1]=left;
+  }
+  for(let s=0;s<n;s++) push(order[s],slots[s],top);
+  const endSlot=Array(n);
+  order.forEach((strand,slot)=>endSlot[strand]=slot);
+  const component=Array(n).fill(-1);let componentCount=0;
+  for(let start=0;start<n;start++) if(component[start]<0){
+    let strand=start;
+    while(component[strand]<0){
+      component[strand]=componentCount;strand=endSlot[strand];
+    }
+    componentCount++;
+  }
+  const paths=points.map((line,strand)=>topoPath(`${id}-strand-${strand}`,
+    component[strand],line,false,{kind:"braid",strand}));
+  for(let slot=0;slot<n;slot++){
+    const level=0.80+slot*0.045,outer=0.82+(n-1-slot)*0.10;
+    paths.push(topoPath(`${id}-closure-${slot}`,component[slot],
+      [[slots[slot],top],[slots[slot],level],[outer,level+0.04],
+       [outer,-level-0.04],[slots[slot],-level],[slots[slot],bottom]],
+      false,{kind:"closure",crossings:false}));
+  }
+  return topoFinalize({
+    id,title,tag,note,paths,expectedCrossings,components:componentCount,events
+  },(crossing,rank,group,all)=>{
+    const event=events.reduce((best,item)=>
+      !best||dist(item.p,crossing.p)<dist(best.p,crossing.p)?item:best,null);
+    return all[crossing.a].meta.strand===event.overStrand?"a":"b";
+  });
+}
+
+function topoChainmailStudy(){
+  const paths=[],spacing=0.45,radius=0.29;
+  for(let row=0;row<3;row++) for(let col=0;col<3;col++){
+    const cx=(col-1)*spacing,cy=(row-1)*spacing,index=row*3+col;
+    paths.push(topoPath(`mail-${index}`,(row+col)%3,
+      topoSample(128,true,u=>{
+        const a=TOPO_TAU*u;return [cx+radius*Math.cos(a),cy+radius*Math.sin(a)];
+      }),true,{kind:"ring",index}));
+  }
+  return topoFinalize({
+    id:"chainmail",title:"European 4-in-1",tag:"square-ring polycatenane",
+    note:"Each interior ring alternately links its four cardinal neighbours.",
+    paths,expectedCrossings:24,components:9
+  },(crossing,rank)=>rank%2===0?"a":"b");
+}
+
+function topoLenoStudy(){
+  const paths=[],centres=[-0.52,0,0.52],wefts=[-0.6,-0.2,0.2,0.6];
+  centres.forEach((centre,pair)=>{
+    for(let strand=0;strand<2;strand++){
+      const sign=strand?1:-1;
+      paths.push(topoPath(`leno-${pair}-${strand}`,strand?2:0,
+        topoSample(160,false,u=>{
+          const y=-0.78+1.56*u;
+          return [centre+sign*0.11*Math.cos(Math.PI*(y+0.6)/0.4),y];
+        }),false,{kind:"warp",pair,strand}));
+    }
+  });
+  wefts.forEach((y,index)=>paths.push(topoPath(`leno-weft-${index}`,1,
+    [[-0.84,y],[0.84,y]],false,{kind:"weft",index})));
+  return topoFinalize({
+    id:"leno",title:"Leno / chain-link",tag:"paired twisting warps",
+    note:"Warp partners exchange sides between wefts and cross each other.",
+    paths,expectedCrossings:33,components:10
+  },(crossing,rank,group,all)=>{
+    const a=all[crossing.a],b=all[crossing.b];
+    if(a.meta.kind!==b.meta.kind){
+      const warp=a.meta.kind==="warp"?a:b,weft=warp===a?b:a;
+      const over=(warp.meta.strand+weft.meta.index)%2===0?warp:weft;
+      return topoBranch(crossing,over,all);
+    }
+    const overStrand=(rank+a.meta.pair)%2;
+    return a.meta.strand===overStrand?"a":"b";
+  });
+}
+
+let TOPOLOGY_STUDIES=null;
+function topologyStudies(){
+  if(!TOPOLOGY_STUDIES){
+    TOPOLOGY_STUDIES=[
+      topoSinusoidalStudy(),
+      topoAnnularStudy(),
+      topoCelticStudy(),
+      topoBraidStudy("braid","Braid closure","figure-eight · (σ₁σ₂⁻¹)²",
+        3,[1,-2,1,-2],"A braid word closes into one four-crossing knot.",4),
+      topoChainmailStudy(),
+      topoLenoStudy(),
+      topoBraidStudy("borromean","Borromean / Brunnian","(σ₁σ₂⁻¹)³ · three components",
+        3,[1,-2,1,-2,1,-2],"Removing any component releases the remaining pair.",6)
+    ];
+  }
+  return TOPOLOGY_STUDIES;
+}
+
+const topologyStudy=id=>{
+  const study=topologyStudies().find(item=>item.id===id);
+  if(!study) throw new Error(`unknown experimental topology '${id}'`);
+  return study;
+};
+
+function topoArcData(path){
+  const count=path.closed?path.points.length:path.points.length-1;
+  const lens=[],cum=[0];
+  for(let i=0;i<count;i++){
+    const a=path.points[i],b=path.points[(i+1)%path.points.length];
+    lens.push(dist(a,b));cum.push(cum[cum.length-1]+lens[lens.length-1]);
+  }
+  return {path,count,lens,cum,total:cum[cum.length-1],closed:path.closed};
+}
+function topoArcS(arc,param){
+  const seg=Math.max(0,Math.min(arc.count-1,Math.floor(param)));
+  const frac=Math.max(0,Math.min(1,param-seg));
+  return arc.cum[seg]+arc.lens[seg]*frac;
+}
+function topoArcPoint(arc,s){
+  if(arc.total<=1e-12) return arc.path.points[0].slice(0,2);
+  if(arc.closed) s=mod(s,arc.total);
+  else s=Math.max(0,Math.min(arc.total,s));
+  if(!arc.closed&&s>=arc.total-1e-10)
+    return arc.path.points[arc.path.points.length-1].slice(0,2);
+  let lo=0,hi=arc.count-1;
+  while(lo<hi){
+    const mid=(lo+hi)>>1;
+    if(arc.cum[mid+1]<s) lo=mid+1; else hi=mid;
+  }
+  const a=arc.path.points[lo],b=arc.path.points[(lo+1)%arc.path.points.length];
+  const u=arc.lens[lo]>1e-12?(s-arc.cum[lo])/arc.lens[lo]:0;
+  return [a[0]+(b[0]-a[0])*u,a[1]+(b[1]-a[1])*u];
+}
+function topoArcSlice(arc,s0,s1){
+  const length=Math.max(0,s1-s0);
+  const maxStep=Math.max(0.25,Math.min(0.6,P.sw*1.25));
+  const count=Math.max(1,Math.ceil(length/maxStep)),out=[];
+  for(let i=0;i<=count;i++) out.push(topoArcPoint(arc,s0+length*i/count));
+  return out;
+}
+function topoPathRuns(pathIndex,arc,events){
+  const eps=1e-7,total=arc.total,runs=[],transitions=[];
+  events.sort((a,b)=>a.s-b.s);
+  if(!arc.closed){
+    const sites=[{s:0,hi:false,edge:true},...events,{s:total,hi:false,edge:true}]
+      .sort((a,b)=>a.s-b.s);
+    let start=0,state=sites[0].hi;
+    for(let i=0;i<sites.length-1;i++){
+      if(sites[i].hi===sites[i+1].hi) continue;
+      const boundary=(sites[i].s+sites[i+1].s)/2;
+      if(boundary-start>eps) runs.push({pathIndex,s0:start,s1:boundary,hi:state});
+      transitions.push(boundary);start=boundary;state=sites[i+1].hi;
+    }
+    if(total-start>eps) runs.push({pathIndex,s0:start,s1:total,hi:state});
+  } else if(!events.length){
+    runs.push({pathIndex,s0:0,s1:total,hi:false,closed:true});
+  } else {
+    const boundaries=[];
+    for(let i=0;i<events.length;i++){
+      const next=(i+1)%events.length;
+      if(events[i].hi===events[next].hi) continue;
+      const forward=mod(events[next].s-events[i].s,total);
+      boundaries.push({s:mod(events[i].s+forward/2,total),after:events[next].hi});
+    }
+    if(!boundaries.length){
+      runs.push({pathIndex,s0:0,s1:total,hi:events[0].hi,closed:true});
+    } else {
+      boundaries.sort((a,b)=>a.s-b.s);
+      for(let i=0;i<boundaries.length;i++){
+        const next=boundaries[(i+1)%boundaries.length];
+        runs.push({pathIndex,s0:boundaries[i].s,
+          s1:next.s+(i===boundaries.length-1?total:0),hi:boundaries[i].after});
+        transitions.push(boundaries[i].s);
+      }
+    }
+  }
+  for(const run of runs){
+    run.crossings=events.map(event=>{
+      let s=event.s;
+      if(arc.closed&&s<run.s0-eps) s+=total;
+      return Object.assign({},event,{runS:s});
+    }).filter(event=>event.runS>=run.s0-eps&&event.runS<=run.s1+eps);
+  }
+  return {runs,transitions};
+}
+function topologyModel(study){
+  const source=study.paths.flatMap(path=>path.points);
+  const minX=Math.min(...source.map(point=>point[0]));
+  const maxX=Math.max(...source.map(point=>point[0]));
+  const minY=Math.min(...source.map(point=>point[1]));
+  const maxY=Math.max(...source.map(point=>point[1]));
+  const edge=Math.max(P.bd*0.75,P.sw*2,0.6);
+  const usable=Math.max(P.sw*4,P.size-2*edge);
+  const scale=usable/Math.max(maxX-minX,maxY-minY,1e-9);
+  const mx=(minX+maxX)/2,my=(minY+maxY)/2;
+  const paths=study.paths.map(path=>topoPath(path.id,path.family,
+    path.points.map(point=>[(point[0]-mx)*scale,(point[1]-my)*scale]),
+    path.closed,path.meta));
+  const arcs=paths.map(topoArcData),events=paths.map(()=>[]);
+  for(const crossing of study.crossings){
+    events[crossing.a].push({s:topoArcS(arcs[crossing.a],crossing.pa),
+      hi:crossing.over==="a",crossing,branch:"a"});
+    events[crossing.b].push({s:topoArcS(arcs[crossing.b],crossing.pb),
+      hi:crossing.over==="b",crossing,branch:"b"});
+  }
+  const runs=[],transitionSites=[];
+  arcs.forEach((arc,pathIndex)=>{
+    const built=topoPathRuns(pathIndex,arc,events[pathIndex]);
+    runs.push(...built.runs);
+    built.transitions.forEach(s=>transitionSites.push({pathIndex,s}));
+  });
+  const posts=[],postByPoint=new Map();
+  const postNeed=P.bd/2+nozHalf()+0.10;
+  const addPost=(pathIndex,s,foundation,required=false)=>{
+    const p=topoArcPoint(arcs[pathIndex],s);
+    const key=`${Math.round(p[0]*1e5)}:${Math.round(p[1]*1e5)}`;
+    let post=postByPoint.get(key);
+    if(!post){
+      if(foundation&&!required&&posts.some(item=>dist(item.p,p)<postNeed)) return null;
+      post={key,p,pathIndex,s,foundation};
+      postByPoint.set(key,post);posts.push(post);
+    } else post.foundation=post.foundation&&foundation;
+    return post;
+  };
+  for(const site of transitionSites) addPost(site.pathIndex,site.s,false,true);
+  const maxSpacing=Math.max(1,P.pitch,P.bd*2.2,postNeed);
+  for(const run of runs){
+    const arc=arcs[run.pathIndex],length=run.s1-run.s0;
+    run.length=length;
+    if(!run.hi) continue;
+    const localCrossings=run.crossings.filter(event=>event.hi)
+      .map(event=>event.runS-run.s0);
+    const avoid=Math.max(P.bd*0.72,P.sw*1.5);
+    let segments=Math.max(1,Math.ceil(length/maxSpacing));
+    while(segments>1&&length/segments<postNeed) segments--;
+    const nodes=[0];
+    for(let i=1;i<segments;i++){
+      const target=length*i/segments;
+      const lower=nodes[nodes.length-1]+postNeed;
+      const upper=length-(segments-i)*postNeed;
+      let candidate=Math.max(lower,Math.min(upper,target));
+      const near=localCrossings.reduce((best,value)=>
+        Math.abs(value-candidate)<Math.abs((best??Infinity)-candidate)?value:best,null);
+      if(near!=null&&Math.abs(near-candidate)<avoid){
+        const options=[near-avoid,near+avoid]
+          .filter(value=>value>=lower&&value<=upper)
+          .sort((a,b)=>Math.abs(a-target)-Math.abs(b-target));
+        if(options.length) candidate=options[0];
+      }
+      nodes.push(candidate);
+    }
+    nodes.push(length);
+    run.nodes=nodes.map((local,index)=>{
+      const absolute=run.s0+local;
+      const transition=transitionSites.some(site=>site.pathIndex===run.pathIndex&&
+        Math.min(Math.abs(mod(absolute,arc.total)-mod(site.s,arc.total)),
+          arc.total-Math.abs(mod(absolute,arc.total)-mod(site.s,arc.total)))<1e-5);
+      const required=index===0||index===nodes.length-1;
+      const post=addPost(run.pathIndex,absolute,!transition,required);
+      return post?{s:absolute,post}:null;
+    }).filter(Boolean);
+  }
+  const bridgeSpans=[];
+  for(const run of runs) if(run.hi&&run.nodes)
+    for(let i=1;i<run.nodes.length;i++) bridgeSpans.push(run.nodes[i].s-run.nodes[i-1].s);
+  return {study,paths,arcs,events,runs,posts,bridgeSpans,scale,edge,
+    pathLength:arcs.reduce((sum,arc)=>sum+arc.total,0)};
+}
+function topologyToolpath(study){
+  const model=topologyModel(study),ops=[],segs=[],passStarts=[],postVisuals=[];
+  const st={dash:0,bridge:0,travel:0,travel3d:0,travelTime:0,drawTime:0,
+    travels:0,retracts:0,posts:0,dots:0,buttonVol:0,nd:0,joins:0,ties:0};
+  let cur=null;
+  const travel=(xy,z,safe=false)=>{
+    if(cur&&dist(cur.p,xy)<1e-9&&Math.abs(cur.z-z)<1e-9) return;
+    if(cur){
+      const dxy=dist(cur.p,xy),d3=Math.hypot(dxy,z-cur.z);
+      st.travel+=dxy;st.travel3d+=d3;
+      st.travelTime+=moveTime(d3,P.ts/60,P.acc);
+      if(dxy>1e-9){
+        st.travels++;
+        if(dxy>=Math.max(0,P.retMin)) st.retracts++;
+      }
+      segs.push({a:cur.p,az:cur.z,b:xy,bz:z,k:"t"});
+    }
+    ops.push({o:"T",x:xy[0],y:xy[1],z,safe});cur={p:xy,z};
+  };
+  const draw=(xy,z,f,k,fam)=>{
+    if(cur){
+      const d= Math.hypot(xy[0]-cur.p[0],xy[1]-cur.p[1],z-cur.z);
+      segs.push({a:cur.p,az:cur.z,b:xy,bz:z,k,fam});
+      st.drawTime+=moveTime(d,f/60,P.acc);
+    }
+    ops.push({o:"D",x:xy[0],y:xy[1],z,f,k});cur={p:xy,z};
+  };
+  const stationary=(v,k)=>{
+    if(!cur) throw new Error("stationary extrusion needs a current point");
+    ops.push({o:"S",v,k,x:cur.p[0],y:cur.p[1],z:cur.z});
+    st.buttonVol+=v;
+  };
+  const dot=(extraRoad=0,full=false)=>{
+    stationary(full?buttonArea()*P.sh*P.pflow:endpointDotVol(extraRoad),"dot");
+    st.dots++;
+  };
+  const grow=(p,zf,zt)=>{
+    const n=Math.max(1,P.pstep),vol=riserVol(p,p,zf,zt);
+    for(let i=0;i<n;i++){
+      const z=zf+(zt-zf)*(i+1)/n;
+      stationary(vol/n,"riser");draw(p,z,P.ps,"p");
+    }
+    st.posts++;
+  };
+  for(let ply=0;ply<P.plies;ply++){
+    const dz=plyDz(ply),shift=(ply%2)?P.pitch/2:0;
+    const zl=z1()+dz,zt=zPost()+dz,zh=z3()+dz;
+    const safeZ=zh+Math.max(P.zhop,P.sh,0.2);
+    const put=p=>place(p,shift);
+    const safeTravel=(p,z)=>{
+      const q=put(p);
+      if(!cur){travel(q,safeZ,true);travel(q,z,true);return q;}
+      travel(cur.p,safeZ,true);travel(q,safeZ,true);travel(q,z,true);return q;
+    };
+    const drawSlice=(arc,s0,s1,z,k,fam)=>{
+      const points=topoArcSlice(arc,s0,s1).map(put);
+      for(let i=1;i<points.length;i++) draw(points[i],z,k==="hi"?P.bs:P.ps,k,fam);
+      return points;
+    };
+    passStarts.push({op:ops.length,pass:1,ply});
+    for(const run of model.runs){
+      if(run.hi) continue;
+      const arc=model.arcs[run.pathIndex],path=model.paths[run.pathIndex];
+      const start=topoArcPoint(arc,run.s0);
+      safeTravel(start,zl);
+      const seam=run.closed&&dist(topoArcPoint(arc,run.s0),topoArcPoint(arc,run.s1))<1e-7;
+      if(!seam) dot();
+      drawSlice(arc,run.s0,run.s1,zl,"lo",path.family);
+      dot(seam?P.bd/2:0);
+      st.dash+=run.length;st.nd++;
+    }
+    for(const post of model.posts){
+      const p=put(post.p);
+      if(post.foundation){safeTravel(post.p,zl);dot(0,true);}
+      const base=ply>0?z3()+plyDz(ply-1):zl;
+      safeTravel(post.p,base);grow(p,base,zt);
+      postVisuals.push({p,dz,seq:segs.length,ply});
+    }
+    passStarts.push({op:ops.length,pass:2,ply});
+    for(const run of model.runs){
+      if(!run.hi) continue;
+      const arc=model.arcs[run.pathIndex],path=model.paths[run.pathIndex],nodes=run.nodes;
+      safeTravel(topoArcPoint(arc,nodes[0].s),zh);dot();
+      for(let i=1;i<nodes.length;i++){
+        drawSlice(arc,nodes[i-1].s,nodes[i].s,zh,"hi",path.family);
+        const closes=run.closed&&i===nodes.length-1&&
+          dist(topoArcPoint(arc,nodes[0].s),topoArcPoint(arc,nodes[i].s))<1e-7;
+        dot(i<nodes.length-1||closes?P.bd/2:0);
+        st.bridge+=nodes[i].s-nodes[i-1].s;
+      }
+      st.nd++;
+    }
+  }
+  return {ops,segs,st,ds:[],seq:{},passStarts,postVisuals,experimental:true,
+    topology:model,study};
+}
+function topologyMetrics(tp){
+  const model=tp.topology,st=tp.st,area=Math.pow(P.size/10,2);
+  let gap=Infinity;
+  for(let i=0;i<model.posts.length;i++) for(let j=i+1;j<model.posts.length;j++)
+    gap=Math.min(gap,dist(model.posts[i].p,model.posts[j].p));
+  if(!isFinite(gap)) gap=P.size;
+  const need=P.bd/2+nozHalf(),clear=gap-need;
+  const freeDia=Math.sqrt(4*P.sw*P.sh/Math.PI),vgap=P.bh-freeDia;
+  const longest=Math.max(0,...model.bridgeSpans.map(span=>Math.max(0,span-P.bd)));
+  const bounds=printBounds(),flow=Math.max(0,P.flow);
+  const lineFlow=Math.max(P.ps,P.bs)/60*P.sw*P.sh*flow;
+  const stationaryFlow=P.pspd/60*FIL_AREA*flow;
+  const tButton=(st.buttonVol/FIL_AREA)/(P.pspd/60);
+  const ret=Math.max(0,P.retract);
+  const tRet=ret&&st.retracts
+    ?st.retracts*ret*(60/P.retSpeed+60/P.primeSpeed):0;
+  const tTrav=st.travelTime+tRet,t=st.drawTime+tTrav+tButton;
+  return {experimental:true,topology:model.study.id,topologyTitle:model.study.title,
+    components:model.study.components,crossings:model.study.crossings.length,
+    dashes:st.nd,buttons:st.dots,posts:st.posts,stops:st.posts/area,
+    longest,clear,minPitch:0,vgap,stretch:0,
+    cover:Math.min(1,model.pathLength*P.sw/(P.size*P.size))*P.plies,
+    tpi:model.study.components*25.4/P.size,
+    ext:st.dash+st.bridge,bvol:st.buttonVol,gap,t,
+    bedMargin:bounds.bedMargin,maxSize:bounds.maxSize,lineFlow,stationaryFlow,
+    fButton:t?tButton/t:0,fTrav:t?tTrav/t:0,
+    pathLength:model.pathLength,supportSpacing:P.pitch};
+}
+function topologyReport(m){
+  const warn=[`EXPERIMENTAL -- ${m.topologyTitle} is implemented but has not been physically validated.`];
+  if(m.clear<0)
+    warn.push("POST CLEARANCE -- neighbouring risers can contact the nozzle body. Increase field size or reduce button dimensions.");
+  else if(m.clear<0.10)
+    warn.push(`POST CLEARANCE -- only ${m.clear.toFixed(2)} mm between the nozzle envelope and a neighbouring riser.`);
+  if(m.vgap<0.08) warn.push("VERTICAL GAP -- bridges may weld to the layer below. Raise button height.");
+  if(m.longest>4.5) warn.push("BRIDGE SPAN -- expect droop. Reduce support spacing or field size.");
+  if(m.bedMargin<0)
+    warn.push(`PRINT AREA -- exceeds the selected bed safety margin. Maximum at this rotation is ${m.maxSize.toFixed(2)} mm.`);
+  const maxFlow=Math.max(m.lineFlow,m.stationaryFlow);
+  if(P.maxVflow>0&&maxFlow>P.maxVflow)
+    warn.push(`VOLUMETRIC FLOW -- ${maxFlow.toFixed(2)} mm3/s exceeds the configured ${P.maxVflow.toFixed(2)} mm3/s limit.`);
+  if(P.plies>1)
+    warn.push("MULTI-PLY -- upper experimental topology plies are generated but have not been physically validated.");
+  const num=(v,dp,w=10)=>v.toFixed(dp).padStart(w);
+  const L=["",
+    `  EXPERIMENTAL / ${m.topologyTitle}   ${P.size} mm field   x${P.plies} ply   rot ${P.rot} deg`,
+    "  "+"-".repeat(70),
+    `  components            ${String(m.components).padStart(10)}`,
+    `  crossings             ${String(m.crossings).padStart(10)}`,
+    `  curved runs           ${String(m.dashes).padStart(10)}`,
+    `  endpoint buttons      ${String(m.buttons).padStart(10)}`,
+    `  support risers        ${String(m.posts).padStart(10)}`,
+    `  stops / cm2           ${num(m.stops,1)}`,
+    `  curve length          ${num(m.pathLength,1)} mm`,
+    `  areal coverage        ${num(m.cover*100,1,9)}%`,
+    "",
+    `  longest bridge        ${num(m.longest,2)} mm`,
+    `  post clearance        ${num(m.clear,2)} mm`,
+    `  vertical gap          ${num(m.vgap,2)} mm`,
+    `  support spacing       ${num(m.supportSpacing,2)} mm max`,
+    `  bed safety margin     ${num(m.bedMargin,2)} mm`,
+    `  max safe square       ${num(m.maxSize,2)} mm`,
+    `  line flow             ${num(m.lineFlow,2)} mm3/s`,
+    `  stationary flow       ${num(m.stationaryFlow,2)} mm3/s`,
+    "",
+    `  extrusion length      ${num(m.ext,0)} mm`,
+    `  stationary material   ${num(m.bvol,1)} mm3`,
+    `  est. print time       ${num(m.t/60,1)} min`,
+    `    in buttons          ${num(m.fButton*100,1,9)}%`,
+    `    in travel           ${num(m.fTrav*100,1,9)}%`,
+    "",...warn.map(w=>"  ! "+w),""];
+  return L.join("\n");
 }
 
 /* ==========================================================================
@@ -829,6 +1446,65 @@ function runCheck(log){
     if(errs.length){bad++;log(`  FAIL  ${name}`);errs.slice(0,4).forEach(e=>log(`        ${e}`));}
     else log(`  ok    ${name}  (${tp.ops.length} ops, ${m.buttons} endpoint buttons, ${m.posts} middle risers)`);
   }
+  const atlas=topologyStudies();
+  const atlasIds=["sinusoidal","annular","celtic","braid","chainmail","leno","borromean"];
+  if(atlas.map(study=>study.id).join(",")!==atlasIds.join(",")){
+    bad++;log("  FAIL  experimental topology registry");
+    log(`        study ids ${atlas.map(study=>study.id).join(",")}`);
+  }
+  for(const study of atlas){
+    Object.assign(P,base,{topology:study.id,size:30,plies:1,pitch:3.6});
+    const errs=[];
+    if(study.printable!==true||study.experimental!==true)
+      errs.push("missing printable experimental declaration");
+    if(!study.paths.length) errs.push("no strands");
+    if(study.crossings.length!==study.expectedCrossings)
+      errs.push(`crossings ${study.crossings.length}, expected ${study.expectedCrossings}`);
+    if(study.paths.some(path=>path.points.length<2||
+        path.points.some(point=>!point.slice(0,2).every(Number.isFinite))))
+      errs.push("non-finite strand");
+    if(study.crossings.some(crossing=>
+        !["a","b"].includes(crossing.over)||!crossing.p.every(Number.isFinite)))
+      errs.push("invalid crossing");
+    let tp=null,m=null,g="";
+    if(!errs.length){
+      tp=toolpath();m=metrics(tp);g=gcode(tp);
+      const eventRuns=tp.topology.runs.flatMap(run=>
+        run.crossings.map(event=>({run,event})));
+      if(eventRuns.length!==study.crossings.length*2)
+        errs.push(`crossing branches ${eventRuns.length}, expected ${study.crossings.length*2}`);
+      if(eventRuns.some(({run,event})=>run.hi!==event.hi))
+        errs.push("crossing branch assigned to wrong z run");
+      if(tp.topology.runs.some(run=>run.hi&&(!run.nodes||run.nodes.length<2)))
+        errs.push("unsupported high run");
+      if(tp.st.posts!==tp.topology.posts.length)
+        errs.push(`riser count ${tp.st.posts}, expected ${tp.topology.posts.length}`);
+      if(tp.passStarts.length!==2||tp.passStarts[0].pass!==1||tp.passStarts[1].pass!==2)
+        errs.push("invalid experimental pass markers");
+      if(tp.ops.some(op=>!["T","D","S"].includes(op.o)||
+          ("v" in op?!Number.isFinite(op.v):![op.x,op.y,op.z].every(Number.isFinite))))
+        errs.push("invalid experimental op");
+      const safeZ=z3()+Math.max(P.zhop,P.sh,0.2);
+      let prev=null;
+      for(const op of tp.ops){
+        if(op.o==="T"&&prev&&dist([op.x,op.y],[prev.x,prev.y])>1e-9&&
+            (op.z<safeZ-1e-9||prev.z<safeZ-1e-9)){
+          errs.push("horizontal travel below safe z");break;
+        }
+        if(op.o!=="S") prev=op;
+      }
+      if(!m.experimental||Object.entries(m).some(([,value])=>
+          typeof value==="number"&&!Number.isFinite(value)))
+        errs.push("invalid experimental metrics");
+      if(!g.includes(`; EXPERIMENTAL — ${study.title}`)||
+          !report(m).includes(`EXPERIMENTAL / ${study.title}`))
+        errs.push("experimental label missing from output");
+    }
+    if(errs.length){
+      bad++;log(`  FAIL  experimental ${study.id}`);
+      errs.slice(0,4).forEach(error=>log(`        ${error}`));
+    } else log(`  ok    experimental ${study.id}  (${tp.ops.length} ops, ${m.crossings} crossings, ${m.posts} risers)`);
+  }
   Object.assign(P,base,PRINTERS.coreone.defaults,
     {printer:"coreone",bed:PRINTERS.coreone.bed.slice(),pattern:"twill"});
   const coreTp=toolpath(),coreM=metrics(coreTp);
@@ -890,7 +1566,8 @@ function runCheck(log){
   if(mkErr){bad++;log("  FAIL  MK4S PP profile");log(`        ${mkErr}`);}
   else log("  ok    MK4S PP profile");
   Object.assign(P,base);
-  log(`\n  ${cases.length+2-bad}/${cases.length+2} configurations pass`);
+  const total=cases.length+atlas.length+2;
+  log(`\n  ${total-bad}/${total} configurations pass`);
   return bad===0;
 }
 
@@ -909,7 +1586,7 @@ if(typeof window==="undefined"&&typeof process!=="undefined"&&process.argv){
     "pass1-fan":"fan1","pass2-fan":"fan",
     "nozzle-temp":"ht","bed-temp":"bt",
     "nozzle-flat":"nflat","nozzle-cone":"ncone"};
-  const STR={lattice:"lattice",pattern:"pattern","triaxial-pattern":"triPattern"};
+  const STR={topology:"topology",lattice:"lattice",pattern:"pattern","triaxial-pattern":"triPattern"};
   const usage=`weaver engine — single-source printed-weave generator
 
   bun engine.js [options] [--report] [--json] [--gcode FILE] [--ops FILE|-]
@@ -918,6 +1595,7 @@ if(typeof window==="undefined"&&typeof process!=="undefined"&&process.argv){
 options mirror the app's parameters:
   --lattice biaxial|triaxial   --pattern plain|twill|crepe|satin|custom
   --triaxial-pattern cyclic|twill|directional
+  --topology straight|sinusoidal|annular|celtic|braid|chainmail|leno|borromean
   --pitch --size --rotate --button-d --button-h --strand-w --strand-h
   --offset-dashes / --no-offset-dashes   --offset-frac --overshoot
   --ground-edges / --no-ground-edges     bed-anchor boundary high runs (default on)
@@ -991,7 +1669,10 @@ outputs (default: --report):
   if(want.check) process.exit(runCheck(console.log)?0:1);
   const biaxialPatterns=["plain","twill","crepe","satin","custom"];
   const triaxialPatterns=["cyclic","twill","directional"];
+  const topologyIds=["straight",...topologyStudies().map(study=>study.id)];
   if(!["biaxial","triaxial"].includes(P.lattice)) die(`unknown lattice '${P.lattice}'`);
+  if(!topologyIds.includes(P.topology))
+    die(`unknown topology '${P.topology}' (${topologyIds.join(", ")})`);
   if(!biaxialPatterns.includes(P.pattern)) die(`unknown biaxial pattern '${P.pattern}'`);
   if(!triaxialPatterns.includes(P.triPattern)) die(`unknown triaxial pattern '${P.triPattern}'`);
   if(P.pattern==="custom"&&!Array.isArray(P.draft)) die("pattern 'custom' needs --draft");

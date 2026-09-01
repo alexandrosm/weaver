@@ -32,6 +32,8 @@ header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
 .mark{font:600 16px/1 "IBM Plex Sans";letter-spacing:.01em}
 .mark b{color:var(--post);font-weight:600}
 .sub{font:400 10.5px/1 var(--mono);color:var(--faint);letter-spacing:.09em;text-transform:uppercase}
+.expbadge{font:600 9px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;
+  color:#2B1902;background:var(--post);border-radius:999px;padding:5px 8px}
 .presets{display:flex;gap:5px;flex-wrap:wrap;margin-left:auto}
 
 /* ---------- buttons ---------- */
@@ -179,6 +181,36 @@ textarea:focus-visible{outline:2px solid var(--post);outline-offset:1px}
   border-radius:var(--r);cursor:crosshair}
 .note{font:400 11px/1.5 var(--mono);color:var(--faint);margin-top:7px}
 
+/* ---------- topology atlas ---------- */
+button:disabled{cursor:not-allowed;opacity:.38}
+.atlas{position:absolute;inset:0;z-index:3;overflow:auto;padding:14px;
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(218px,1fr));grid-auto-rows:max-content;
+  align-content:start;gap:10px;background:linear-gradient(180deg,#091B2E,#061421)}
+.atlas[hidden]{display:none}
+.atlas-intro{grid-column:1/-1;padding:11px 13px;border:1px solid rgba(242,169,60,.48);
+  border-left:3px solid var(--post);border-radius:var(--r);background:rgba(242,169,60,.08)}
+.atlas-intro strong{display:block;font:600 11px/1.3 var(--mono);color:#FFE0AE;
+  text-transform:uppercase;letter-spacing:.08em}
+.atlas-intro span{display:block;margin-top:5px;font:400 11px/1.45 var(--mono);color:var(--dim)}
+.atlas-card{min-width:0;border:1px solid var(--rule);border-radius:6px;overflow:hidden;
+  background:rgba(14,35,56,.88);box-shadow:0 8px 24px rgba(1,8,18,.18)}
+.atlas-card.selected{border-color:var(--post);box-shadow:0 0 0 1px var(--post),0 10px 28px rgba(1,8,18,.3)}
+.atlas-card header{display:block;padding:9px 10px 8px;border:0;border-bottom:1px solid var(--rule);
+  background:rgba(21,48,72,.72)}
+.atlas-card h3{font:600 13px/1.25 "IBM Plex Sans";color:var(--ink)}
+.atlas-card .tag{display:block;margin-top:4px;font:500 9px/1.2 var(--mono);
+  text-transform:uppercase;letter-spacing:.08em;color:var(--post)}
+.atlas-card canvas{display:block;width:100%;height:152px;background:#071726}
+.atlas-card footer{padding:8px 10px 10px}
+.atlas-card .facts{font:500 9.5px/1.35 var(--mono);color:var(--warp)}
+.atlas-card p{margin-top:5px;font:400 10.5px/1.4 var(--mono);color:var(--faint)}
+.atlas-card .atlas-use{width:100%;margin-top:8px;padding:8px}
+
+@media (max-width:820px){
+  .atlas{grid-template-columns:1fr;padding:10px}
+  .atlas-card canvas{height:190px}
+}
+
 .tabs{display:none;gap:4px;padding:8px 12px;border-bottom:1px solid var(--rule)}
 @media (max-width:1280px){
   main{grid-template-columns:286px minmax(390px,1fr) 342px}
@@ -234,19 +266,22 @@ textarea:focus-visible{outline:2px solid var(--post);outline-offset:1px}
       <div class="seg" id="vmode" style="margin:0">
         <button data-vm="fabric" aria-pressed="true">Fabric</button>
         <button data-vm="path" aria-pressed="false">Toolpath</button>
+        <button data-vm="atlas" aria-pressed="false">Knot atlas</button>
       </div>
+      <span class="expbadge" id="expbadge" hidden>Experimental output</span>
       <div class="seg" id="vpre" style="margin:0">
         <button data-vp="iso">3/4</button><button data-vp="top">Top</button><button data-vp="side">Side</button>
       </div>
-      <label class="mini">Z<input type="range" id="zx" min="1" max="10" step="1" value="3"><output id="zx_o">3×</output></label>
-      <label class="mini">Shear<input type="range" id="shear" min="-30" max="30" step="1" value="0"><output id="shear_o">0°</output></label>
+      <label class="mini" id="zxctl">Z<input type="range" id="zx" min="1" max="10" step="1" value="3"><output id="zx_o">3×</output></label>
+      <label class="mini" id="shearctl">Shear<input type="range" id="shear" min="-30" max="30" step="1" value="0"><output id="shear_o">0°</output></label>
       <span class="sp" id="counts"></span>
     </div>
     <div class="plate">
+      <div class="atlas" id="atlas" hidden aria-label="Knot topology study gallery"></div>
       <canvas id="view" tabindex="0" aria-label="Fabric preview, arrow keys orbit"></canvas>
       <div class="legend" id="lgd"></div>
-      <div class="hint">drag or arrows to orbit · scroll to zoom</div>
-      <div class="ordbar">
+      <div class="hint" id="viewhint">drag or arrows to orbit · scroll to zoom</div>
+      <div class="ordbar" id="ordbar">
         <input type="range" id="ord" min="0" max="1" step="1" value="1" aria-label="Print order scrub">
         <output id="ord_o">complete</output>
       </div>
@@ -283,7 +318,7 @@ textarea:focus-visible{outline:2px solid var(--post);outline-offset:1px}
 </main>
 </div>
 
-<script src="engine.js?v=18"></script>
+<script src="engine.js?v=20"></script>
 <script>
 "use strict";
 /* UI for engine.js, which the script tag above loads first — geometry,
@@ -310,7 +345,8 @@ const WEAVE_GROUPS=[
     {type:"patterns",family:"biaxial",k:"pattern",id:"patseg",l:"Biaxial patterns",
       o:[["plain","Plain"],["twill","2/2 twill"],["crepe","Crepe"],["satin","Satin"],["custom","Custom"]]},
     {type:"patterns",family:"triaxial",k:"triPattern",id:"tripatseg",l:"Triaxial patterns",
-      o:[["cyclic","Cyclic 1/1"],["twill","2/2 twill"],["directional","Directional"]]}]},
+      o:[["cyclic","Cyclic 1/1"],["twill","2/2 twill"],["directional","Directional"]]},
+    {type:"note",id:"topologynote",t:"Straight-family production geometry. Open Knot atlas for the experimental curved structures."}]},
   {t:"Weave dimensions",open:true,big:true,items:[
     {k:"pitch",l:"Pitch",u:"mm",min:1.5,max:8,st:0.05,dp:2},
     {k:"bd",l:"Button diameter",u:"mm",min:0.4,max:2.4,st:0.05,dp:2},
@@ -452,6 +488,10 @@ function buildControls(){
     }
     const seg=b.parentElement.dataset.seg;
     if(seg){
+      if(["lattice","pattern","triPattern"].includes(seg)){
+        P.topology="straight";
+        if(vmode==="atlas") activatePreviewMode("fabric");
+      }
       if(b.parentElement.dataset.lattice) P.lattice=b.parentElement.dataset.lattice;
       P[seg]=b.dataset.v;syncControls();recompute();
     } else if(b.dataset.tog){
@@ -486,6 +526,21 @@ function syncControls(){
     set.classList.toggle("active",active);
     set.hidden=!active;
   });
+  const experimental=isExperimental();
+  $("expbadge").hidden=!experimental;
+  $("topologynote").textContent=experimental
+    ?`Experimental topology: ${topologyStudy(P.topology).title}. Pitch controls maximum support spacing; straight-weave edge and offset mechanisms do not apply.`
+    :"Straight-family production geometry. Open Knot atlas for the experimental curved structures.";
+  const pitchLabel=document.querySelector('label[for="pitch_n"]');
+  if(pitchLabel) pitchLabel.textContent=experimental?"Support spacing":"Pitch";
+  for(const key of ["edge","join","offd"]){
+    const button=document.querySelector(`[data-tog="${key}"]`);
+    if(button){button.disabled=experimental;button.title=experimental?"Not used by experimental curved topologies.":"";}
+  }
+  for(const key of ["ovs","offFrac"]){
+    for(const suffix of ["_n","_r"]){const input=$(key+suffix);if(input) input.disabled=experimental;}
+  }
+  updateAtlasSelection();
   const def=printerDef();
   $("profile_machine").textContent=def.machine;
   $("profile_filament").textContent=def.filament;
@@ -616,6 +671,44 @@ function gauge(name,val,unit,lo,hi,thr,invert,dp){
 }
 let PIN=null;
 function paint(m){
+  if(m.experimental){
+    const maxFlow=Math.max(m.lineFlow,m.stationaryFlow);
+    $("gauges").innerHTML =
+      gauge("Post clearance",m.clear,"mm",-1.5,2.0,0.10,false,2)+
+      gauge("Longest bridge",m.longest,"mm",0,9,4.5,true,2)+
+      gauge("Vertical gap",m.vgap,"mm",0,0.7,0.08,false,2)+
+      gauge("Stops per cm²",m.stops,"",0,50,30,true,1)+
+      (P.maxVflow>0?gauge("Volumetric flow",maxFlow,"mm³/s",0,
+        Math.max(P.maxVflow*1.5,maxFlow),P.maxVflow,true,2):"");
+    const rows=[["Selected",m.topologyTitle],["Components",m.components,0],
+      ["Crossings",m.crossings,0],["Curved runs",m.dashes,0],
+      ["Endpoint buttons",m.buttons,0],["Support risers",m.posts,0],
+      ["Curve length",m.pathLength,1," mm"],["Areal coverage",m.cover*100,1,"%"],
+      ["Max support spacing",m.supportSpacing,2," mm"],
+      ["Bed safety margin",m.bedMargin,2," mm"],["Max safe square",m.maxSize,2," mm"],
+      ["Line flow",m.lineFlow,2," mm³/s"],["Stationary flow",m.stationaryFlow,2," mm³/s"],
+      ["Extrusion",m.ext,0," mm"],["Est. print time",m.t/60,1," min"],
+      ["— in buttons",m.fButton*100,0,"%"],["— in travel",m.fTrav*100,0,"%"]];
+    $("mets").innerHTML=rows.map(([name,value,dp=0,unit=""])=>
+      `<div class="m"><span>${name}</span><span>${typeof value==="number"?value.toFixed(dp)+unit:value}</span></div>`).join("");
+    const F=[["a",`EXPERIMENTAL — ${m.topologyTitle} has a complete generated toolpath but no physical print validation.`]];
+    if(m.clear<0) F.push(["b","Post clearance — neighbouring risers can contact the nozzle body. Increase field size or reduce button dimensions."]);
+    else if(m.clear<0.10) F.push(["a",`Post clearance — only ${m.clear.toFixed(2)} mm of margin around neighbouring risers.`]);
+    if(m.vgap<0.08) F.push(["b","Vertical gap — bridges may weld to the layer below. Raise button height."]);
+    if(m.longest>4.5) F.push(["a","Bridge span — expect droop. Reduce support spacing or field size."]);
+    if(m.bedMargin<0) F.push(["b",`Print area — exceeds the selected bed margin. Use ≤ ${m.maxSize.toFixed(2)} mm or press Fit.`]);
+    if(P.maxVflow>0&&maxFlow>P.maxVflow)
+      F.push(["b",`Volumetric flow — ${maxFlow.toFixed(2)} mm³/s exceeds the configured ${P.maxVflow.toFixed(2)} mm³/s limit.`]);
+    if(P.plies>1) F.push(["a","Multi-ply experimental output is generated but not physically validated."]);
+    $("flags").innerHTML=F.map(([c,text])=>`<div class="flag ${c==="a"?"a":""}">${text}</div>`).join("");
+    $("counts").textContent=`EXPERIMENTAL · ${m.topologyTitle} · ${m.crossings} crossings · ${m.posts} risers`;
+    $("mapnote").textContent="The design-space map applies only to straight-family production weaves. Experimental topology uses field size and support spacing.";
+    const lg=vmode==="atlas"?[]:vmode==="path"
+      ?[["lo","low curves"],["hi","high curves"],["p","support riser"],["t","safe lifted travel"]]
+      :[["f0","strand family A"],["f1","strand family B"],["f2","strand family C"],["p","support riser"]];
+    $("lgd").innerHTML=lg.map(([k,text])=>`<span><i style="background:${LGD[k]}"></i>${text}</span>`).join("");
+    return;
+  }
   const maxFlow=Math.max(m.lineFlow,m.stationaryFlow);
   $("gauges").innerHTML =
     gauge("Nozzle clearance",m.clear,"mm",-0.6,1.0,0.10,false,2)+
@@ -674,7 +767,8 @@ function paint(m){
  * bridge droop, and round free-air bridges vs squished bed strands.
  * Toolpath mode stays a flat diagnostic of the commanded path.
  * ================================================================== */
-const cv=$("view"), cx=cv.getContext("2d");
+const cv=$("view"), cx=cv.getContext("2d"), atlasEl=$("atlas");
+const ATLAS=topologyStudies();
 let az=0.62, el=0.5, zoom=1, vmode="fabric", zx=3, shear=0, W=600,H=400,S=1, TP=null;
 const COL={lo:"#59C6EF",hi:"#6FD3B0",p:"#F2A93C",t:"rgba(155,178,203,.26)"};
 const FAB={f0:[43,36,82],f1:[213,26,76],f2:[8,30,78],p:[36,64,58]};   // h,s,l
@@ -710,6 +804,94 @@ function drawOutline(){
   cx.strokeStyle="rgba(35,74,110,.9)"; cx.lineWidth=1; cx.beginPath();
   corner.forEach((p,i)=>i?cx.lineTo(p.x,p.y):cx.moveTo(p.x,p.y)); cx.closePath(); cx.stroke();
 }
+const TOPO_COL=["#BDE6F5","#8ED9BE","#D0B9F4"];
+function drawTopologyStudy(canvas,study){
+  const rect=canvas.getBoundingClientRect(),w=Math.max(160,rect.width),h=Math.max(120,rect.height);
+  const dpr=window.devicePixelRatio||1,ctx=canvas.getContext("2d");
+  canvas.width=w*dpr;canvas.height=h*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  const bg=ctx.createRadialGradient(w*0.5,h*0.42,8,w*0.5,h*0.5,Math.max(w,h)*0.7);
+  bg.addColorStop(0,"#102C45");bg.addColorStop(1,"#061522");
+  ctx.fillStyle=bg;ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle="rgba(46,92,135,.18)";ctx.lineWidth=1;
+  for(let x=0;x<w;x+=24){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();}
+  for(let y=0;y<h;y+=24){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
+  const points=study.paths.flatMap(path=>path.points);
+  const minX=Math.min(...points.map(point=>point[0])),maxX=Math.max(...points.map(point=>point[0]));
+  const minY=Math.min(...points.map(point=>point[1])),maxY=Math.max(...points.map(point=>point[1]));
+  const scale=Math.min((w-24)/Math.max(1e-6,maxX-minX),(h-20)/Math.max(1e-6,maxY-minY));
+  const mx=(minX+maxX)/2,my=(minY+maxY)/2;
+  const map=point=>[w/2+(point[0]-mx)*scale,h/2-(point[1]-my)*scale];
+  const trace=path=>{
+    ctx.beginPath();
+    path.points.forEach((point,index)=>{
+      const p=map(point);if(index) ctx.lineTo(p[0],p[1]);else ctx.moveTo(p[0],p[1]);
+    });
+    if(path.closed) ctx.closePath();
+  };
+  ctx.lineCap="round";ctx.lineJoin="round";
+  for(const path of study.paths){
+    trace(path);ctx.strokeStyle="rgba(2,9,18,.88)";ctx.lineWidth=7.8;ctx.stroke();
+    trace(path);ctx.strokeStyle=TOPO_COL[path.family%TOPO_COL.length];ctx.lineWidth=4.4;ctx.stroke();
+    if(!path.closed){
+      for(const point of [path.points[0],path.points[path.points.length-1]]){
+        const p=map(point);ctx.beginPath();ctx.arc(p[0],p[1],2.4,0,TOPO_TAU);
+        ctx.fillStyle=TOPO_COL[path.family%TOPO_COL.length];ctx.fill();
+      }
+    }
+  }
+  for(const crossing of study.crossings){
+    const branch=crossing.over,pi=branch==="a"?crossing.a:crossing.b;
+    const tangent=branch==="a"?crossing.ta:crossing.tb,p=map(crossing.p);
+    const tx=tangent[0],ty=-tangent[1],len=Math.hypot(tx,ty)||1;
+    const dx=tx/len*8.5,dy=ty/len*8.5;
+    ctx.beginPath();ctx.moveTo(p[0]-dx,p[1]-dy);ctx.lineTo(p[0]+dx,p[1]+dy);
+    ctx.strokeStyle="#061522";ctx.lineWidth=9.4;ctx.stroke();
+    ctx.beginPath();ctx.moveTo(p[0]-dx,p[1]-dy);ctx.lineTo(p[0]+dx,p[1]+dy);
+    ctx.strokeStyle=TOPO_COL[study.paths[pi].family%TOPO_COL.length];
+    ctx.lineWidth=4.8;ctx.stroke();
+  }
+}
+function updateAtlasSelection(){
+  if(!atlasEl||!atlasEl.dataset.ready) return;
+  atlasEl.querySelectorAll(".atlas-card").forEach(card=>{
+    const selected=card.dataset.study===P.topology;
+    card.classList.toggle("selected",selected);
+    const button=card.querySelector(".atlas-use");
+    if(button){
+      button.setAttribute("aria-pressed",String(selected));
+      button.textContent=selected?"Selected for experimental output":"Use for experimental output";
+    }
+  });
+}
+function renderAtlas(){
+  if(!atlasEl.dataset.ready){
+    atlasEl.innerHTML=`<div class="atlas-intro"><strong>Experimental topology · generated output</strong>`+
+      `<span>Seven link geometries share one curved-strand engine. Each now generates low curves, `+
+      `separate support risers, high curves, lifted travel, metrics, an op stream, and G-code. `+
+      `Select a card; every resulting output remains labelled EXPERIMENTAL until physically validated.</span></div>`+
+      ATLAS.map(study=>`<article class="atlas-card" data-study="${study.id}">`+
+        `<header><h3>${study.title}</h3><span class="tag">Experimental · ${study.tag}</span></header>`+
+        `<canvas aria-label="${study.title} topology diagram"></canvas>`+
+        `<footer><div class="facts">${study.components} components · ${study.crossings.length} crossings</div>`+
+        `<p>${study.note}</p><button class="atlas-use" data-use-topology="${study.id}">Use for experimental output</button>`+
+        `</footer></article>`).join("");
+    atlasEl.dataset.ready="true";
+  }
+  updateAtlasSelection();
+  for(const study of ATLAS){
+    const canvas=atlasEl.querySelector(`[data-study="${study.id}"] canvas`);
+    if(canvas) drawTopologyStudy(canvas,study);
+  }
+}
+atlasEl.addEventListener("click",event=>{
+  const button=event.target.closest("[data-use-topology]");
+  if(!button) return;
+  const study=topologyStudy(button.dataset.useTopology),wasStraight=!isExperimental();
+  P.topology=study.id;
+  if(wasStraight) P.size=study.recommendedSize;
+  syncControls();recompute();
+});
 function mkSeg(a,az_,b,bz,k,fam,lw,shadow){
   const A=proj(a[0],a[1],az_),B=proj(b[0],b[1],bz);
   return {a,b,A,B,d:(A.d+B.d)/2,k,fam,lw,shadow};
@@ -769,21 +951,25 @@ function renderFabric(){
     else if(s.k==="p") add(mkSeg(s.a,s.az-cz,s.b,s.bz-cz,"p",undefined,Math.max(1.3,P.bd*0.42*S),false),zk);
     else add(mkSeg(s.a,s.az-cz,s.b,s.bz-cz,"lo",s.fam,lwLo,s.az>P.bh),zk);
   }
-  const seen=new Set();
-  for(let ply=0;ply<P.plies;ply++){
-    const shift=(ply%2)?P.pitch/2:0, dz=plyDz(ply);
-    for(const D of TP.ds){
-      if(!D.post) continue;
-      const key=ply+":"+D.L.f+":"+D.L.i+":"+D.pb.toFixed(3);
-      if(seen.has(key)) continue; seen.add(key);
-      if(showN>=0&&((TP.seq?.[key])??0)>showN) continue;   // post not built yet here
-      const c=place(postC(D),shift);
-      // The physical node is three fused bands: low endpoint dot, virtual-
-      // middle riser, and high endpoint dot. Draw their combined barrel to
-      // the high strand centreline plane; exaggerated z would otherwise open
-      // a fake visual gap between the cap and bridge (NOTES §2.4).
+  if(TP.experimental){
+    for(const post of TP.postVisuals){
+      if(showN>=0&&post.seq>showN) continue;
       const ph=P.bh+P.sh/2;
-      items.push({post:c,dz,ph,zk:dz+P.bh/2,d:proj(c[0],c[1],dz+P.bh/2).d});
+      items.push({post:post.p,dz:post.dz,ph,zk:post.dz+P.bh/2,
+        d:proj(post.p[0],post.p[1],post.dz+P.bh/2).d});
+    }
+  } else {
+    const seen=new Set();
+    for(let ply=0;ply<P.plies;ply++){
+      const shift=(ply%2)?P.pitch/2:0,dz=plyDz(ply);
+      for(const D of TP.ds){
+        if(!D.post) continue;
+        const key=ply+":"+D.L.f+":"+D.L.i+":"+D.pb.toFixed(3);
+        if(seen.has(key)) continue;seen.add(key);
+        if(showN>=0&&((TP.seq?.[key])??0)>showN) continue;
+        const c=place(postC(D),shift),ph=P.bh+P.sh/2;
+        items.push({post:c,dz,ph,zk:dz+P.bh/2,d:proj(c[0],c[1],dz+P.bh/2).d});
+      }
     }
   }
   // shadow pass: anything airborne casts onto the bed
@@ -843,6 +1029,7 @@ function drawScaleBar(){
   }
 }
 function render(){
+  if(vmode==="atlas"){renderAtlas();return;}
   cx.clearRect(0,0,W,H);
   if(!TP) return;
   drawOutline();
@@ -923,6 +1110,24 @@ function refreshEnvelope(){
   if(!startCustom) $("startg").value=printerDef().start();
   if(!endCustom) $("endg").value=printerDef().end();
 }
+const outputContextNote=()=>isExperimental()
+  ?`EXPERIMENTAL — ${topologyStudy(P.topology).title}; generated but not physically validated.`
+  :profileNote();
+function activatePreviewMode(next){
+  vmode=next;
+  document.querySelectorAll("#vmode button").forEach(button=>
+    button.setAttribute("aria-pressed",String(button.dataset.vm===vmode)));
+  syncPreviewMode();
+}
+function syncPreviewMode(){
+  const atlasMode=vmode==="atlas";
+  cv.hidden=atlasMode;atlasEl.hidden=!atlasMode;
+  $("vpre").hidden=atlasMode;$("zxctl").hidden=atlasMode;$("shearctl").hidden=atlasMode;
+  $("ordbar").hidden=atlasMode;$("viewhint").hidden=atlasMode;$("lgd").hidden=atlasMode;
+  $("gen").disabled=false;$("dl").disabled=false;
+  $("outnote").textContent=outputContextNote();
+  if(atlasMode) renderAtlas();
+}
 function doRecompute(full){
   if(full||!TP){
     TP=toolpath();
@@ -935,7 +1140,7 @@ function doRecompute(full){
   syncControls();refreshEnvelope();drawMap();paint(m);
   if(full){ drawDraft(); fitView(); }
   lastG=null;
-  $("outnote").textContent=`${profileNote()} Parameters changed — generate again.`;
+  $("outnote").textContent=`${outputContextNote()} Parameters changed — generate again.`;
 }
 function requestRecompute(full){
   rafFull=rafFull||full;
@@ -943,11 +1148,13 @@ function requestRecompute(full){
 }
 function recompute(){ doRecompute(true); }
 $("vmode").addEventListener("click",e=>{
-  const b=e.target.closest("button"); if(!b) return;
-  vmode=b.dataset.vm;
-  document.querySelectorAll("#vmode button").forEach(x=>
-    x.setAttribute("aria-pressed",String(x.dataset.vm===vmode)));
-  paint(metrics(TP)); render();
+  const b=e.target.closest("button");if(!b) return;
+  activatePreviewMode(b.dataset.vm);
+  if(vmode==="atlas"&&!isExperimental()){
+    P.topology=ATLAS[0].id;P.size=ATLAS[0].recommendedSize;
+    syncPreviewMode();syncControls();recompute();return;
+  }
+  paint(metrics(TP));render();
 });
 $("vpre").addEventListener("click",e=>{
   const b=e.target.closest("button"); if(!b) return;
@@ -993,7 +1200,7 @@ $("gen").addEventListener("click",()=>{
   if(!TP) recompute();
   lastG=genG();
   const kb=(new Blob([lastG]).size/1024).toFixed(1);
-  setOut(lastG,`${lastG.split("\n").length} lines · ${kb} KB. Select all to copy, or download.`);
+  setOut(lastG,`${isExperimental()?"EXPERIMENTAL · ":""}${lastG.split("\n").length} lines · ${kb} KB. Select all to copy, or download.`);
 });
 function save(text,name,type){
   try{
@@ -1008,7 +1215,7 @@ function save(text,name,type){
   }
 }
 $("dl").addEventListener("click",()=>{
-  if(!lastG){ if(!TP) recompute(); lastG=genG(); }
+  if(!lastG){if(!TP) recompute();lastG=genG();}
   save(lastG,`loomwright_${P.printer}_${P.size}mm_rot${P.rot}_${activePattern()}.gcode`,"text/plain");
 });
 const configText=()=>JSON.stringify(P,null,2)+"\n";
@@ -1032,11 +1239,11 @@ $("savecfg").addEventListener("click",()=>{
 });
 
 const PRESETS={
-  "Baseline":{lattice:"biaxial",pattern:"twill",pitch:3.6,bd:0.9,bh:0.45,offd:false,plies:1,size:30},
-  "Dense":{lattice:"biaxial",pattern:"plain",pitch:2.6,bd:0.7,bh:0.35,offd:false,plies:1,size:26},
-  "Stretch":{lattice:"biaxial",pattern:"plain",pitch:3.8,bd:1.8,bh:0.5,offd:true,plies:1,size:30},
-  "Triaxial":{lattice:"triaxial",triPattern:"cyclic",pitch:6.8,bd:0.9,bh:0.45,sw:0.4,sh:0.2,offd:false,plies:1,size:34},
-  "Two ply":{lattice:"biaxial",pattern:"twill",pitch:3.6,bd:0.9,bh:0.45,offd:false,plies:2,tack:3,size:26},
+  "Baseline":{topology:"straight",lattice:"biaxial",pattern:"twill",pitch:3.6,bd:0.9,bh:0.45,offd:false,plies:1,size:30},
+  "Dense":{topology:"straight",lattice:"biaxial",pattern:"plain",pitch:2.6,bd:0.7,bh:0.35,offd:false,plies:1,size:26},
+  "Stretch":{topology:"straight",lattice:"biaxial",pattern:"plain",pitch:3.8,bd:1.8,bh:0.5,offd:true,plies:1,size:30},
+  "Triaxial":{topology:"straight",lattice:"triaxial",triPattern:"cyclic",pitch:6.8,bd:0.9,bh:0.45,sw:0.4,sh:0.2,offd:false,plies:1,size:34},
+  "Two ply":{topology:"straight",lattice:"biaxial",pattern:"twill",pitch:3.6,bd:0.9,bh:0.45,offd:false,plies:2,tack:3,size:26},
 };
 $("presets").innerHTML=Object.keys(PRESETS).map(k=>`<button data-p="${k}">${k}</button>`).join("")
   +`<button id="pin" title="Pin current numbers to compare against">Pin</button>`;
@@ -1051,7 +1258,9 @@ $("presets").addEventListener("click",e=>{
       "— in buttons":m.fButton*100,"— in travel":m.fTrav*100};
     b.setAttribute("aria-pressed",String(!!PIN)); paint(m); return;
   }
-  Object.assign(P,PRESETS[b.dataset.p]); syncControls(); recompute();
+  Object.assign(P,PRESETS[b.dataset.p]);
+  if(vmode==="atlas") activatePreviewMode("fabric");
+  syncControls();recompute();
 });
 
 $("tabs").addEventListener("click",e=>{
@@ -1071,7 +1280,7 @@ function applyPrinter(name){
   P.bed=def.bed.slice();
   startCustom=false;endCustom=false;
   recompute();
-  $("outnote").textContent=`${profileNote()} Weave design preserved.`;
+  $("outnote").textContent=`${outputContextNote()} Design preserved.`;
 }
 buildControls();
 $("prsel").addEventListener("click",e=>{
@@ -1080,8 +1289,8 @@ $("prsel").addEventListener("click",e=>{
 $("startg").addEventListener("input",()=>{startCustom=true;lastG=null;});
 $("endg").addEventListener("input",()=>{endCustom=true;lastG=null;});
 window.addEventListener("resize",()=>{drawMap();drawDraft();fitView();});
-syncControls();refreshEnvelope();recompute();
-$("outnote").textContent=profileNote();
+syncPreviewMode();syncControls();refreshEnvelope();recompute();
+$("outnote").textContent=outputContextNote();
 </script>
 </body>
 </html>

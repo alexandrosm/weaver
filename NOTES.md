@@ -227,6 +227,35 @@ printed bridges because the reverse sweep keeps the region ahead of the nozzle
 unprinted. Any dash reordering must preserve a clean sweep front or hop above
 *H* + *h*.
 
+### Experimental curved/link scheduler
+
+The seven topology studies are now complete engine inputs rather than preview
+art. `topologyModel()` scales each sampled diagram into the requested field,
+maps both branches of every crossing to arclength, and partitions each open or
+closed strand into cyclic low/high runs. Open ends are forced onto the low
+plane. Closed components retain their declared crossing word.
+
+High runs receive transition risers at every low/high boundary. If a high run
+exceeds the configured support spacing (`pitch` in the shared parameter model),
+extra bed-founded risers subdivide it; candidates are kept away from crossings
+and from the nozzle envelope of existing risers. The operation order is
+deliberately conservative:
+
+1. deposit every low curve and its level-owned endpoint buttons;
+2. deposit standalone foundation buttons and grow every riser;
+3. deposit every high curve, adding top buttons wherever it crosses a riser.
+
+Every disconnected move rises above the complete current-ply z stack before
+moving in XY and descends only at its destination. This scheduler therefore
+does not rely on the straight lattice's reverse-sweep front. The same `T`, `D`,
+and `S` operation grammar feeds browser rendering, plain G-code, and
+FullControl.
+
+These routes are labelled **EXPERIMENTAL** in the app, report, G-code header,
+saved configuration, and CLI selection. They are implemented and checked
+computationally, but none has yet been physically printed. Experimental is a
+validation state, not a missing-code state.
+
 ### Why endpoint buttons are cheap
 
 The nozzle already decelerates to zero at every dash end. Folding a stationary
@@ -345,6 +374,11 @@ the same coverage) beats halving the pitch (4× cost).
   sequences, riser sites strictly pairwise distinct, exactly two correctly
   placed level-owned endpoint dots per dash, a sane op stream, consistent
   stationary-volume accounting, and finite metrics.
+- `bun engine.js --check` builds all seven experimental topologies end to end:
+  finite sampled curves, exact crossing counts and branch ownership, cyclic
+  low/high run assignment, supported high runs, separate riser counts, safe-z
+  horizontal travel, finite metrics, and EXPERIMENTAL labels in both report
+  and G-code.
 - The feasibility map's analytic model matches full geometry rebuilds to three
   decimals at sampled points.
 
@@ -591,13 +625,18 @@ endpointDotVol(), riserVol()   volume-complete three-band button construction
 toolpath()                     two-pass op stream + per-ply pass boundaries
 metrics(), report()            geometry, bed, flow and time constraints
 gcode()                        profiles + flow/fan/travel controls → G-code
-runCheck()                     geometry and printer-profile invariant suite
+topologyStudies(), topologyModel()  seven sampled link diagrams → cyclic runs and supports
+topologyToolpath()             conservative low / riser / high op scheduler
+topologyMetrics(), topologyReport() experimental constraints and labelled report
+runCheck()                     production + seven-topology + printer-profile suite
 ```
 
 ```bash
 bun engine.js --report
 bun engine.js --pattern plain --pitch 3.6 --gcode swatch.gcode
 bun engine.js --lattice triaxial --triaxial-pattern directional --report
+bun engine.js --topology chainmail --size 30 --report
+bun engine.js --topology borromean --size 30 --gcode borromean.gcode
 bun engine.js --draft figured.json --gcode figured.gcode   # custom lift plan
 bun engine.js --json                                       # metrics for scripts
 bun engine.js --check                                      # invariant suite
@@ -616,10 +655,16 @@ Fabric mode renders the deposited result under a volume-conservation model —
 flat w × h roads on support, round Ø√(4wh/π) strands in free air, layered
 cylindrical buttons, profile-aware shading, and cast shadows — with
 contact-anchored drawing so exaggerated z never opens fake gaps at the joints.
-Toolpath mode shows the commanded tip path. The pattern rail renders only the
-family compatible with the selected biaxial or triaxial structure. Switching
-structure swaps the visible choices while each family's independent selection
-remains stored.
+Toolpath mode shows the commanded tip path. Knot atlas mode compares and
+selects seven engine-owned experimental geometries: sinusoidal biaxial,
+annular, repeated Celtic trefoils, a figure-eight braid closure, European
+four-in-one chainmail, leno, and Borromean rings. Selecting a card rebuilds the
+complete op stream and enables the normal report, Fabric, Toolpath, Generate,
+Download, configuration, CLI, and FullControl routes. The app keeps an
+EXPERIMENTAL badge visible for any such selection. Choosing a biaxial/triaxial
+structure or a production preset returns to the straight-family engine. The
+pattern rail renders only the family compatible with that selected straight
+structure; each family's independent selection remains stored.
 
 Output profiles now identify printer, filament, and nozzle separately in the
 right rail. Generic, the verified Core One 0.6 / Prusament PLA setup, and the
@@ -648,10 +693,11 @@ PrusaLink uploader for Buddy printers (Core One, MK4, XL): PUT to
 `/api/v1/files/<storage>/<name>` with X-Api-Key (digest fallback, user
 "maker"), optional print-after-upload. The engine owns two matching Buddy
 profiles. `coreone` targets the device-authoritative 0.6 mm nozzle and PLA;
-`mk4spp` targets the device-authoritative 0.5 mm nozzle and the successful
-Fiberlogy PP envelope. Both centre the field, compute area-limited M555 probing
-from the rotated square plus a two-pitch margin, and emit their own verified
-startup/purge/shutdown sequence.
+`mk4spp` targets the device-authoritative 0.5 mm nozzle and the physically
+successful Fiberlogy PP envelope. Production weaves centre the field and
+compute area-limited M555 probing from the rotated square plus a two-pitch
+margin. Experimental topology uses a button-envelope margin. Each profile
+emits its verified startup/purge/shutdown sequence.
 
 ```bash
 bun engine.js --printer coreone --gcode pla.gcode
@@ -670,6 +716,11 @@ python print.py pp.gcode --host <printer-ip> --key <key> --go
 - **A new lattice** is an entry in `families()` plus a branch in `highAt()`.
   Anything expressible as families of parallel lines with a pairwise
   over/under rule will work unmodified downstream.
+- **A new curved/link topology** belongs in `topologyStudies()`: sampled open
+  or closed strands, robust pairwise intersections, explicit branch ownership,
+  an exact crossing-count assertion, and an experimental label. The generic
+  cyclic run splitter, support placer, safe lifted scheduler, metrics, browser,
+  CLI, G-code, and FullControl routes then apply unmodified.
 - **Pile** would be a third pass emitting arcs between chosen post pairs. It
   doesn't touch the in-plane geometry at all.
 - **Stuffer threads** (Bedford cord) would be a family that never lifts, with the
