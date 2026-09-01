@@ -616,10 +616,10 @@ Fabric mode renders the deposited result under a volume-conservation model —
 flat w × h roads on support, round Ø√(4wh/π) strands in free air, layered
 cylindrical buttons, profile-aware shading, and cast shadows — with
 contact-anchored drawing so exaggerated z never opens fake gaps at the joints.
-Toolpath mode shows the commanded tip path. The named biaxial and triaxial
-pattern selectors are both always visible; the inactive family is dimmed, and
-choosing any pattern activates its matching lattice. Their independent settings
-persist without overloading semantics.
+Toolpath mode shows the commanded tip path. The pattern rail renders only the
+family compatible with the selected biaxial or triaxial structure. Switching
+structure swaps the visible choices while each family's independent selection
+remains stored.
 
 Output profiles now identify printer, filament, and nozzle separately in the
 right rail. Generic, the verified Core One 0.6 / Prusament PLA setup, and the

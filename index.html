@@ -100,9 +100,7 @@ input[type=range]{width:100%;accent-color:var(--warp);height:14px;display:block}
 .pattern-set .seg{margin-bottom:0}
 .pattern-set.active{border-left-color:var(--warp)}
 .pattern-set.active .patlab{color:var(--warp)}
-.pattern-set.active .patlab::after{content:" · active";color:var(--ok)}
-.pattern-set.inactive .seg{opacity:.52}
-.pattern-set.inactive:hover .seg,.pattern-set.inactive:focus-within .seg{opacity:.82}
+.pattern-set[hidden]{display:none}
 
 
 /* ---------- output profile ---------- */
@@ -485,7 +483,8 @@ function syncControls(){
     b.setAttribute("aria-pressed",String(!!P[b.dataset.tog])));
   document.querySelectorAll(".pattern-set").forEach(set=>{
     const active=set.dataset.family===P.lattice;
-    set.classList.toggle("active",active);set.classList.toggle("inactive",!active);
+    set.classList.toggle("active",active);
+    set.hidden=!active;
   });
   const def=printerDef();
   $("profile_machine").textContent=def.machine;
