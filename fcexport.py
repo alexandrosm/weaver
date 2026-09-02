@@ -58,17 +58,25 @@ def build_steps(payload: dict):
         fc.Extruder(on=False),
     ]
     last_f = None
+    cur = None
     for op in payload["ops"]:
         kind = op["o"]
         if kind == "T":
             steps.append(fc.Extruder(on=False))
+            hop = op.get("hop")
+            if hop is not None and cur is not None:
+                # Lifted travel: straight up, across at the safe height, straight down.
+                steps.append(fc.Point(x=cur[0], y=cur[1], z=hop))
+                steps.append(fc.Point(x=op["x"] + bx, y=op["y"] + by, z=hop))
             steps.append(fc.Point(x=op["x"] + bx, y=op["y"] + by, z=op["z"]))
             steps.append(fc.Extruder(on=True))
+            cur = (op["x"] + bx, op["y"] + by)
         elif kind == "D":
             if op["f"] != last_f:
                 steps.append(fc.Printer(print_speed=op["f"]))
                 last_f = op["f"]
             steps.append(fc.Point(x=op["x"] + bx, y=op["y"] + by, z=op["z"]))
+            cur = (op["x"] + bx, op["y"] + by)
         else:
             steps.append(fc.StationaryExtrusion(volume=op["v"], speed=prm["pspd"]))
     steps.append(fc.Extruder(on=False))

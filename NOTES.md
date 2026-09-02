@@ -238,37 +238,47 @@ motif:
 
 | study | structural class | diagram invariant | intended question |
 |---|---|---|---|
-| sinusoidal | finite deformed biaxial weave | 6 × 6 open paths, 36 plain-parity crossings | does added centre-line arclength provide recoverable in-plane reserve? |
-| annular | finite radial weave | 4 closed rings × 8 open spokes, 32 alternating crossings | how does a fixed-count radial coupon expose density gradient and shear? |
-| Celtic | repeated knot coupon | four disjoint trefoils, three self-crossings each | can closed self-crossing components be printed without calling ornament a sheet? |
-| figure-eight | closed-braid knot coupon | closure of `(σ₁σ₂⁻¹)²`, one component, four self-crossings | can a braid word and its standard closure become one physical strand? |
-| chainmail | finite polycatenane network | staggered 3–4–3 patch, 10 rings, 12 Hopf-linked pairs | do independently closed rings release as a mobile 4-in-1 network? |
-| leno | finite true-leno weave | 3 doup/skeleton pairs × 4 wefts; partners cross between picks | can paired warps grip each pick without a mock-leno substitution? |
-| Borromean | Brunnian link coupon | closure of `(σ₁σ₂⁻¹)³`, 3 components, pairwise linking zero | does collective linkage survive while every two-component sublink remains trivial? |
+| sinusoidal | Finite deformed biaxial weave | 6 × 6 open paths, 36 plain-parity crossings | does added centre-line arclength provide recoverable in-plane reserve? |
+| annular | Finite annular weave | 4 closed circumferential rings × 8 open radial spokes, 32 alternating crossings | how does a fixed-count radial coupon expose density gradient and shear? |
+| Celtic | Repeated closed-knot coupon | four disjoint trefoils, three self-crossings and determinant 3 each | can closed self-crossing components be printed without calling ornament a sheet? |
+| figure-eight | Closed-braid knot coupon | closure of `(σ₁σ₂⁻¹)²`, one component, four self-crossings, determinant 5 (Knot Atlas 4_1) | can a braid word and its standard closure become one physical strand? |
+| chainmail | Finite polycatenane network | staggered 3–4–3 patch, 10 rings, 12 Hopf-linked pairs, ring words {OUOU: 6, OOUU: 2, OOUOUUOU: 2} | do independently closed rings release as a mobile 4-in-1 network? |
+| leno | Finite true-leno weave | 3 doup/skeleton pairs × 4 wefts; 24 warp–weft crossings plus 3 partner crossings per pair | can paired warps grip each pick without a mock-leno substitution? |
+| Borromean | Brunnian link coupon | closure of `(σ₁σ₂⁻¹)³`, 3 components, determinant 16, pairwise linking zero, every pair splits (determinant 0) | does collective linkage survive while every two-component sublink remains trivial? |
 
 Every registry entry carries an explicit design contract: structural class,
 diagram identity, mechanical hypothesis, print strategy, principal unresolved
 risk, one technical source, and machine-checkable facts. The facts cover
 open/closed component counts, histograms of self- and pair-crossing counts,
-alternation where claimed, and pairwise linking-number magnitudes where those
-distinguish the object. `paths.length === components` is required: a decorative
-closure stroke is not allowed to masquerade as part of a physical component.
+alternation where claimed, pairwise linking-number magnitudes where those
+distinguish the object, canonical ring words for chainmail, and Fox-colouring
+determinants (`topoDeterminant`, exact BigInt Bareiss elimination on the
+colouring matrix) for the whole diagram, per closed component, or per
+interacting pair — the Borromean pair determinant of 0 is what certifies the
+Brunnian split sublinks. `paths.length === components` is required: a
+decorative closure stroke is not allowed to masquerade as part of a physical
+component.
 
 `topologyModel()` scales the sampled diagram into the requested coupon, maps
 both branches of every crossing to arclength, and compiles **local overpass
 windows**. A strand stays on the low plane except around a crossing it owns.
-For crossing angle *θ*, the target half-window is
+The window is curvature-aware and asymmetric (`topoWindow`). For crossing
+angle *θ* the straight-strand estimate
 
 ```
 c = D/2 + w/2 + 0.10 mm
-half-window = max(2w, 0.8 mm, c / max(sin θ, 0.10))
+half-window₀ = max(2w, 0.8 mm, c / max(sin θ, 0.10))
 ```
 
-and is capped at 38% of the arclength to the nearest crossing or open edge.
-The angle term keeps the low-level roads separated after a shallow crossing;
-the cap prevents one overpass from swallowing the next crossing. The quality
-report independently exposes the remaining crossing interval, so a dense
-diagram fails visibly rather than silently merging windows.
+is only the starting point. Each side is then widened in 0.05 mm steps until
+its transition site clears the under strand's **actual polyline** by *c* (for
+a self-crossing, the strand's own road beyond 2·D of arclength). The start
+and each side are capped at 38% of the arclength to the nearest other
+crossing or open end, so one overpass never swallows the next crossing. A
+capped side that still fails is not hidden: the button / road margin metric
+below reports it, and the report separately exposes the remaining crossing
+interval, so a dense diagram fails visibly rather than silently merging
+windows.
 
 Exactly two transition risers bracket each high run. There are **no**
 bed-founded, sacrificial, or spacing-driven helper posts. Such a prop would weld
@@ -282,30 +292,57 @@ The operation order is deliberately conservative:
 2. grow every topology-owned transition riser from the low plane;
 3. deposit every local high overpass and its high-level endpoint buttons.
 
-Every disconnected move rises above the full z stack before moving in XY and
-descends only at its destination. The scheduler does not rely on the straight
-lattice's reverse-sweep front. The same `T`, `D`, and `S` operation grammar
-feeds browser rendering, plain G-code, and FullControl.
+Every disconnected move is one lifted travel op — a `T` carrying `hop`, the
+safe height z3 + max(z-hop, layer height, 0.2 mm), above the full z stack.
+`gcode()` expands it as retract → lift → XY → lower → prime, the order the
+production profiles were verified with, and always retracts a lifted hop
+regardless of the retract-minimum distance: every hop crosses deposited
+strands. `fcexport.py` expands the same op into lift / cross / lower points.
+A pure z change at one XY stays a plain travel. The scheduler does not rely
+on the straight lattice's reverse-sweep front. The same `T`, `D`, and `S`
+operation grammar feeds browser rendering, plain G-code, and FullControl.
 
-Experimental coupons are **single-ply by contract**. Pitch, selvedge, offset,
-tack, and ply-gap controls belong to the straight-family grammar; the app
-disables them and the engine rejects `plies != 1` instead of inventing an
-unvalidated cross-topology stacking rule. A checked atlas default also applies
-the reference 0.90 mm button and 0.40 mm strand width; button height is raised
-as needed to preserve at least 0.13 mm over the free-strand diameter at the
-active layer height. This prevents a Core One or MK4 output profile from
+Experimental **post clearance** is the §4.1 quantity with the lattice
+removed: the closest spacing between any two transition risers, minus D/2,
+minus the nozzle cone half-width at (*H* − *h*) above the tip. The
+road-to-riser case of §4.1 cannot occur here — every low road is printed
+before any riser exists, and while a riser grows from the low plane the only
+things standing proud of the tip are neighbouring finished risers, at most
+(*H* − *h*) tall. Riser-to-road contact in plan is a welding question, not a
+nozzle-collision one, and belongs to the next metric.
+
+The **button / road margin** (`button_road_margin_mm`, `buttonClear`) is that
+weld check. Every transition riser and every open-strand endpoint button is a
+D-wide dot on the plane of the road it terminates. The metric is the minimum,
+over all of them, of (distance to any road of a foreign strand, or of its own
+strand beyond 2·D of arclength) − (D/2 + w/2), and of (distance to any other
+button) − D. Negative means contact — the accidental weld the contracts
+forbid. Report and app warn below 0.10 mm and flag an error below zero;
+`--check` requires at least 0.10 mm at every checked default on the generic,
+Core One, and MK4S profiles.
+
+Experimental coupons are **single-ply by contract**. Pitch, overshoot,
+offset, selvedge, tack, and ply-gap controls belong to the straight-family
+grammar; the app disables them and the engine rejects `plies != 1` instead of
+inventing an unvalidated cross-topology stacking rule. A checked atlas default
+also applies the reference 0.90 mm button and 0.40 mm strand width; button
+height is the larger of 0.45 mm and free-strand diameter + 0.13 mm at the
+active layer height, rounded **up** to 0.01 mm (0.45 mm at 0.20 mm layers,
+0.61 mm at 0.45 mm layers), and the REFERENCE GEOMETRY warning fires on any
+departure beyond 1e-6. This prevents a Core One or MK4S output profile from
 silently donating its much larger straight-weave button to an experimental
-coupon. The experimental report adds non-crossing road separation, minimum bend
-radius, crossing interval, open-path reserve, reference geometry, recommended
-coupon size, and an explicit count of zero foundation supports. Parameter edits
-remain allowed, but the report identifies departure from the checked geometry
-and evaluates the resulting toolpath on its actual dimensions.
+coupon. The experimental report adds non-crossing road separation, button /
+road margin, minimum bend radius, crossing interval, open-path reserve,
+reference geometry, and recommended coupon size. Parameter edits remain
+allowed, but the report identifies departure from the checked geometry and
+evaluates the resulting toolpath on its actual dimensions.
 
 Maturity is stated as three separate facts: diagram contract checked, toolpath
 invariants checked, physical print pending. The app, report, G-code header,
-configuration, CLI, and atlas retain the **EXPERIMENTAL** label until a real
-coupon has been printed, released, and inspected. Experimental means a known
-validation boundary, not missing code and not evidence of physical success.
+CLI, and atlas carry the **EXPERIMENTAL** label, and the saved configuration
+carries the topology id, until a real coupon has been printed, released, and
+inspected. Experimental means a known validation boundary, not missing code
+and not evidence of physical success.
 
 ### Why endpoint buttons are cheap
 
@@ -426,24 +463,43 @@ the same coverage) beats halving the pitch (4× cost).
   placed level-owned endpoint dots per dash, a sane op stream, consistent
   stationary-volume accounting, and finite metrics.
 - `bun engine.js --check` builds all seven experimental studies at their
-  recommended coupon sizes. It checks each design contract's open/closed
-  component count, self/pair crossing histogram, claimed alternating word,
-  and pairwise linking-number profile; the physical path count must equal the
-  declared component count.
-- The same suite checks that every crossing branch lands on its declared
-  low/high run, every high run has exactly two topology-owned transition
-  risers, no foundation support exists, horizontal travel stays at safe z,
-  multi-ply input is rejected, all metrics are finite, and report/G-code
-  headers carry the class and EXPERIMENTAL status. At each checked reference
-  default (0.90 mm button, 0.40 mm strand, single ply, and at least 0.13 mm
-  vertical gap), post clearance and unrelated-road separation are at least
-  0.10 mm, bend radius is at least one strand width, crossing interval exceeds
-  the button-plus-road width, and free bridge span is at most 4.5 mm.
-- The checked atlas defaults are rebuilt under both Core One PLA and MK4S PP
-  profile geometry. Each profile-adapted button height must retain those same
-  clearance, curvature, span, vertical-gap, and bed-fit bounds.
-- The feasibility map's analytic model matches full geometry rebuilds to three
-  decimals at sampled points.
+  checked defaults (generic profile) and asserts, per study:
+  - **Diagram contract** — physical path count equals the declared component
+    count; open/closed counts; self- and pair-crossing histograms; the
+    declared alternating word; pairwise linking-number magnitudes where
+    declared; canonical ring words (chainmail `{OUOU: 6, OOUU: 2,
+    OOUOUUOU: 2}`); Fox-colouring determinants — braid 5, Borromean 16,
+    3 per Celtic component, 2 per Hopf-linked chainmail pair, 0 per Borromean
+    pair; the expected crossing count; an `https://` source; finite strands
+    and crossings.
+  - **Run assignment** — every crossing branch lands on a run of its declared
+    low/high level; every high run is bracketed by two distinct
+    topology-owned transition risers; transition-site count equals riser
+    count equals the risers the toolpath grew.
+  - **Op stream** — exactly two pass markers; the stream opens with a travel;
+    every op is `T`/`D`/`S` with finite coordinates or positive volume; every
+    horizontal travel carries a `hop` at z3 + max(z-hop, layer height,
+    0.2 mm); travel and retract counts both equal the number of lifted hops;
+    endpoint dots are two per run minus closed-run seams; riser pulses equal
+    risers × post-steps; the sum of `S` volumes equals the stationary total;
+    all metrics finite.
+  - **Bounds at the checked default** — post clearance, unrelated road gap,
+    and button / road margin all ≥ 0.10 mm; bend radius ≥ one strand width;
+    crossing interval ≥ D + w; free bridge span ≤ 4.5 mm; vertical gap
+    ≥ 0.13 mm; the coupon fits the bed margin.
+  - **Labels** — the G-code header carries `EXPERIMENTAL — <title>`,
+    `class: <contract.kind>`, and the transition-only-risers design line; the
+    report opens with `EXPERIMENTAL / <title>`.
+  - Multi-ply input is rejected with the single-ply error (asserted once, on
+    the first study). A build that throws is a FAIL line, not a crash.
+- The same stream, bound, and accounting assertions are repeated with every
+  study rebuilt under the Core One PLA and MK4S PP profiles (their layer
+  height, speeds, and bed), and the printer G-code is additionally checked for
+  the lifted-travel contract: retract → lift → XY → lower → prime, one
+  retract and one prime per lifted hop.
+
+One-time manual check, not part of the suite: the feasibility map's analytic
+model matched full geometry rebuilds to three decimals at sampled points.
 
 **Physically observed:**
 
@@ -472,8 +528,8 @@ the same coverage) beats halving the pitch (4× cost).
 
 - That every experimental crossing releases rather than welding. A correct
   diagram and collision-free commanded path cannot establish physical freedom.
-- That each experimental bridge stays above the lower road, especially the
-  4.11 mm Borromean overpass.
+- That each experimental bridge stays above the lower road; the longest is
+  now the 2.36 mm sinusoidal overpass.
 - That the proposed mechanisms survive handling: sinusoidal reserve may become
   slip, leno buttons may become rigid locks, and chainmail contacts may weld.
 - That straight-family crimp is enough to lock rather than pull flat.
@@ -515,25 +571,40 @@ been physically validated; all three require small swatches.
 The experimental defaults below are computational envelopes for the reference
 0.90 mm button, 0.40 mm strand, 0.20 mm layer, 0.45 mm button height, and
 generic 0.8 mm-flat / 120° nozzle model. They are not successful-print claims.
-The atlas preserves the selected output profile's layer height and adapts button
-height to retain 0.13 mm vertical gap. Large defaults, especially chainmail,
-are intentional: shrinking a diagram while holding nozzle and button
-dimensions fixed collapses post and road clearance.
+The atlas preserves the selected output profile's layer height and re-derives
+the reference button height for it — the larger of 0.45 mm and free-strand
+diameter + 0.13 mm, rounded up to 0.01 mm: 0.45 mm at 0.20 mm layers, 0.61 mm
+at the Core One and MK4S profiles' 0.45 mm layers. Large defaults, especially
+chainmail, are intentional: shrinking a diagram while holding nozzle and
+button dimensions fixed collapses post, road, and button clearance. The
+sinusoidal default moved from 30 to 32 mm because at 30 mm the capped
+overpass windows left only 0.05 mm of button / road margin.
 
-| study | default size | crossings | risers | longest bridge | post clearance | unrelated road gap | min bend radius |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| sinusoidal | 30 mm | 36 | 72 | 2.12 mm | +0.30 mm | +0.29 mm | 2.97 mm |
-| annular | 48 mm | 32 | 64 | 0.70 mm | +0.28 mm | +0.38 mm | 7.69 mm |
-| Celtic trefoils | 24 mm | 12 | 24 | 0.70 mm | +0.31 mm | +0.38 mm | 1.84 mm |
-| figure-eight braid | 26 mm | 4 | 8 | 2.76 mm | +2.37 mm | +0.11 mm | 0.48 mm |
-| European 4-in-1 | 96 mm | 24 | 48 | 0.95 mm | +0.27 mm | +0.38 mm | 7.02 mm |
-| true leno | 28 mm | 33 | 66 | 0.70 mm | +0.29 mm | +0.14 mm | 2.32 mm |
-| Borromean | 34 mm | 6 | 12 | 4.11 mm | +3.73 mm | +0.24 mm | 0.55 mm |
+| study | default size | crossings | risers | longest bridge | post clearance | unrelated road gap | button / road margin | min bend radius |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| sinusoidal | 32 mm | 36 | 72 | 2.36 mm | +0.30 mm | +0.32 mm | +0.10 mm | 3.18 mm |
+| annular | 48 mm | 32 | 64 | 0.70 mm | +0.28 mm | +0.38 mm | +0.11 mm | 7.69 mm |
+| Celtic trefoils | 24 mm | 12 | 24 | 0.70 mm | +0.31 mm | +0.38 mm | +0.11 mm | 1.84 mm |
+| figure-eight braid | 26 mm | 4 | 8 | 0.70 mm | +0.32 mm | +0.36 mm | +0.14 mm | 1.27 mm |
+| European 4-in-1 | 96 mm | 24 | 48 | 1.05 mm | +0.27 mm | +0.38 mm | +0.10 mm | 7.02 mm |
+| true leno | 28 mm | 33 | 66 | 0.70 mm | +0.29 mm | +0.45 mm | +0.14 mm | 2.32 mm |
+| Borromean | 34 mm | 6 | 12 | 0.81 mm | +0.43 mm | +0.46 mm | +0.10 mm | 0.83 mm |
 
-Road separation excludes the intentional projection overlap while its owning
-branch is physically high; it still measures nonlocal same-level approaches.
-Minimum bend radius covers local neighbours that are deliberately excluded from
-that nonlocal road-gap metric.
+The longest experimental bridge is now the 2.36 mm sinusoidal overpass. The
+braid and Borromean diagrams were rebuilt with full-step cosine strand swaps
+(steeper crossings, slots at ±0.26) and closure lanes of straight runs plus
+concentric constant-radius arcs (innermost radius 0.10, lane spacing 0.06 in
+diagram units), which removed their long shallow overpasses and their
+sub-strand-width bend radii.
+
+Unrelated road gap is the closest plan approach between two road segments
+minus one strand width. It skips the intentional projection overlap around a
+crossing while its owning branch is physically high, and it skips two segments
+of the same strand whose arclength intervals are less than max(2D, 4w) apart
+— an interval test, so a tight bend is never counted as a self-approach.
+Minimum bend radius covers those excluded local neighbours. Transition risers
+and open-strand endpoint buttons are not roads; their plan separation from
+roads and from each other is the button / road margin column.
 
 ---
 
@@ -733,13 +804,18 @@ dashPts(), postC()             plan-space geometry incl. the sawtooth offset
 endpointDotVol(), riserVol()   volume-complete three-band button construction
 toolpath()                     two-pass op stream + per-ply pass boundaries
 metrics(), report()            geometry, bed, flow and time constraints
-gcode()                        profiles + flow/fan/travel controls → G-code
+warnings()                     dispatches to the straight or topology warning list
+gcode()                        profiles + flow/fan/travel controls → G-code; expands `hop` travels
 topologyStudies()              seven sourced diagrams + design/verification contracts
-topoDiagramFacts()             component, crossing, alternation, and linking profiles
+topoDiagramFacts()             component, crossing, alternation, linking, and ring-word profiles
+topoDeterminant()              Fox-colouring determinant of a path subset (BigInt Bareiss)
+topoPolylineDistance()         point-to-strand distance with an own-arclength exclusion
+topoWindow()                   curvature-aware asymmetric overpass window for one crossing
 topologyModel()                local overpass windows + transition-only risers
-topoGeometryQuality()          road gap, bend radius, crossing interval, path reserve
-topologyToolpath()             conservative low / transition / high op scheduler
+topoGeometryQuality()          road gap, button / road margin, bend radius, crossing interval, path reserve
+topologyToolpath()             conservative low / transition / high op scheduler; one `hop` op per travel
 topologyMetrics(), topologyReport() experimental constraints and design dossier
+topologyWarnings()             experimental warning block (EXPERIMENTAL, scale, reference, clearances, flow)
 runCheck()                     production + seven-topology + printer-profile suite
 ```
 
@@ -754,9 +830,19 @@ bun engine.js --json                                       # metrics for scripts
 bun engine.js --check                                      # invariant suite
 ```
 
+CLI flags are parsed first and applied in a fixed order: printer profile →
+`--config` → the checked atlas default for an experimental `--topology` (only
+the keys nothing else set) → explicit flags. `--printer` may therefore appear
+anywhere on the line; flag order never matters. `--gcode` and `--ops` without
+`--report` still print the warning block to stderr. Validation exits via
+`die()`: size must be positive, plies an integer ≥ 1 (and exactly 1 for an
+experimental topology), post-steps an integer ≥ 1, every speed and the
+acceleration positive; a build error is reported as a message, not a stack
+trace.
+
 ### `index.html`
 
-The app: UI only, engine loaded via `<script src="engine.js">`; works over
+The app: UI only, engine loaded via `<script src="engine.js?v=N">`; works over
 `file://`, no build step, no dependencies beyond a webfont. The workspace uses
 a general slicer split: the left rail owns weave structure, dimensions,
 mechanisms, lift plan, and design space; the centre owns the live fabric or
@@ -777,24 +863,33 @@ component boundary, and computationally checked default size.
 
 Selecting a card applies that study's checked single-ply size, 0.90 mm button,
 0.40 mm strand, and layer-height-adapted button height, then rebuilds the
-complete op stream. The left rail replaces the inapplicable lift-plan and
+complete op stream. Entering the atlas snapshots the straight design (button
+diameter and height, strand width, size, plies); choosing a biaxial/triaxial
+structure or pattern restores it, while a production preset replaces it and
+drops the snapshot. The left rail replaces the inapplicable lift-plan and
 straight design-space panels with the same source-grounded dossier; pitch,
-selvedge, offset, tack, and ply controls are disabled rather than repurposed.
-The report rail adds topology-specific clearance, nonlocal road-gap, curvature,
-crossing-interval, reserve, and zero-foundation-support facts. Fabric,
-Toolpath, Generate, Download, configuration, CLI, and FullControl routes remain
-available, while the EXPERIMENTAL badge and physical-validation warning remain
-visible. Choosing a biaxial/triaxial structure or production preset returns to
-the straight-family engine and restores those controls.
+overshoot, offset, selvedge, tack, and ply controls are disabled rather than
+repurposed. Reference strings come from the engine's `TOPOLOGY_REFERENCE`.
+The report rail adds topology-specific post-clearance, nonlocal road-gap,
+button / road margin, curvature, crossing-interval, reserve, and reference
+geometry facts; each gauge's colour bands use the same thresholds as its flag
+(amber below 0.10 mm, red below zero). Fabric, Toolpath, Generate, Download,
+configuration, CLI, and FullControl routes remain available, the download
+filename carries `EXPERIMENTAL_`, and the EXPERIMENTAL badge and
+physical-validation warning remain visible. Choosing a biaxial/triaxial
+structure or production preset returns to the straight-family engine and
+restores those controls.
 
 Output profiles now identify printer, filament, and nozzle separately in the
 right rail. Generic, the verified Core One 0.6 / Prusament PLA setup, and the
 physically successful MK4S 0.5 / Fiberlogy PP setup remain the supported
 bundles. Selecting an output profile applies its bed, bead, nozzle, material,
 and process settings without replacing the weave's lattice, pattern, pitch,
-button geometry, mechanisms, size, or rotation. Generic leaves the process
-values editable for a custom machine. The app outputs G-code or the complete
-parameter JSON consumed by the CLI and `fcexport.py`.
+button geometry, mechanisms, size, or rotation — except that an experimental
+coupon sitting at the reference button height gets that height re-derived for
+the new layer height. Generic leaves the process values editable for a custom
+machine. The app outputs G-code or the complete parameter JSON consumed by the
+CLI and `fcexport.py`.
 
 ### `fcexport.py`
 
@@ -842,10 +937,12 @@ python print.py pp.gcode --host <printer-ip> --key <key> --go
   branch ownership, `paths.length === components`, a recommended safe coupon
   size, and a complete contract (`kind`, `identity`, `mechanism`, `strategy`,
   `risk`, `source`, `verify`). `verify` must assert the component boundary and
-  crossing histograms; add alternation and pairwise linking profiles whenever
-  they are part of the claimed identity. The generic local-overpass compiler,
-  transition-only scheduler, quality metrics, browser, CLI, G-code, and
-  FullControl routes then apply. Do not add foundation props or infer multi-ply.
+  crossing histograms; add alternation, pairwise linking profiles, ring
+  `words`, and `determinant` / `componentDeterminant` / `pairDeterminant`
+  whenever they are part of the claimed identity. The generic local-overpass
+  compiler, transition-only scheduler, quality metrics, browser, CLI, G-code,
+  and FullControl routes then apply. Do not add foundation props or infer
+  multi-ply.
 - **Pile** would be a third pass emitting arcs between chosen post pairs. It
   doesn't touch the in-plane geometry at all.
 - **Stuffer threads** (Bedford cord) would be a family that never lifts, with the
@@ -887,10 +984,16 @@ python print.py pp.gcode --host <printer-ip> --key <key> --go
   woven fabrics, <https://doi.org/10.4028/www.scientific.net/AMR.331.198>.
   Production annular cloth uses unequal picks and shear; this fixed-count
   coupon deliberately exposes rather than solves the density gradient.
-- **Closed braids** — Dale Rolfsen, *Tutorial on the braid groups*,
-  <https://arxiv.org/html/1010.4051>. Standard closure connects braid endpoints
-  without introducing new braid interactions.
-- **Celtic and alternating knots** — Connor and Ward, *Celtic Knot Theory*,
+- **Figure-eight knot** — Knot Atlas, *4_1*, <https://katlas.org/wiki/4_1>.
+  Source of the braid coupon: minimum braid `BR(3,{-1,2,-1,2})`, determinant
+  5. The engine's generator convention is the mirror of Rolfsen's tutorial
+  (*Tutorial on the braid groups*, <https://arxiv.org/html/1010.4051>), which
+  is harmless because both shipped words are amphichiral; Rolfsen's standard
+  closure — connecting braid endpoints without new braid interactions — is
+  still the closure construction, realised as straight runs plus concentric
+  constant-radius arcs.
+- **Celtic and alternating knots** — University of Edinburgh, *Celtic Knot
+  Theory* (Connor and Ward),
   <https://webhomes.maths.ed.ac.uk/~v1ranick/knots/celtic.pdf>. Used to keep
   ornamental alternating knot claims separate from textile-sheet claims.
 - **European 4-in-1 geometry** — Alexander R. Klotz, *Geometric considerations

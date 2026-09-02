@@ -383,7 +383,7 @@ function toolpath(){
     st.dots++;
   };
   const grow=(from,to,zf,zt,tackFrom)=>{
-    const z0=tackFrom!=null?tackFrom:zf,n=Math.max(1,P.pstep);
+    const z0=tackFrom!=null?tackFrom:zf,n=Math.max(1,Math.round(P.pstep));
     const vol=riserVol(from,to,z0,zt);
     for(let i=0;i<n;i++){
       const fr=(i+1)/n;
@@ -594,6 +594,7 @@ function metrics(tp){
 }
 function gcode(tp,startG="",endG=""){
   const ePerMm=P.sw*P.sh/FIL_AREA,L=[];
+  const nx=v=>v.toFixed(4).replace(/\.?0+$/,"")||"0";
   L.push(`; Loomwright — ${isExperimental()?"EXPERIMENTAL topology":"printed weave"}`);
   if(isExperimental()){
     const study=topologyStudy(P.topology);
@@ -601,7 +602,7 @@ function gcode(tp,startG="",endG=""){
     L.push(`; class: ${study.contract.kind}`);
     L.push(`; invariant: ${study.contract.identity}`);
     L.push(`; ${study.components} physical components  ${study.crossings.length} crossings  ${P.size} mm coupon  rot ${P.rot}deg`);
-    L.push(`; button ${P.bd} x ${P.bh} mm   strand ${P.sw} x ${P.sh} mm`);
+    L.push(`; button ${nx(P.bd)} x ${nx(P.bh)} mm   strand ${nx(P.sw)} x ${nx(P.sh)} mm`);
     L.push("; transition-owned risers only; no sacrificial or foundation supports");
   } else {
     L.push(`; ${P.lattice} / ${activePattern()}  pitch ${P.pitch} mm  ${P.size} mm square  x${P.plies} ply  rot ${P.rot}deg`);
@@ -621,7 +622,6 @@ function gcode(tp,startG="",endG=""){
   const flowPct=Math.round(Math.max(0,P.flow)*100);
   L.push(`M221 S${flowPct} ; model extrusion multiplier`);
   let cur=null,lastF=null;
-  const nx=v=>v.toFixed(4).replace(/\.?0+$/,"")||"0";
   const retract=Math.max(0,P.retract),zhop=Math.max(0,P.zhop);
   const passAt=new Map((tp.passStarts||[{op:0,pass:1,ply:0}]).map(s=>[s.op,s]));
   for(let oi=0;oi<tp.ops.length;oi++){
@@ -633,11 +633,11 @@ function gcode(tp,startG="",endG=""){
     const op=tp.ops[oi];
     if(op.o==="T"){
       const xyDist=cur?Math.hypot(op.x-cur[0],op.y-cur[1]):0;
-      const xyMove=xyDist>1e-9;
-      const doRet=xyMove&&xyDist>=Math.max(0,P.retMin)&&retract>0;
+      const xyMove=xyDist>1e-9,lifted=op.hop!=null;
+      const doRet=retract>0&&cur&&(lifted||(xyMove&&xyDist>=Math.max(0,P.retMin)));
       if(doRet) L.push(`G1 F${P.retSpeed} E-${nx(retract)}`);
-      if(cur&&xyMove&&zhop>0&&!op.safe){
-        const hopZ=Math.max(cur[2],op.z)+zhop;
+      if(lifted||(cur&&xyMove&&zhop>0)){
+        const hopZ=lifted?op.hop:Math.max(cur[2],op.z)+zhop;
         L.push(`G0 F${P.ts} Z${nx(hopZ)}`);
         L.push(`G0 X${nx(op.x+P.bed[0])} Y${nx(op.y+P.bed[1])}`);
         L.push(`G0 Z${nx(op.z)}`);
@@ -657,8 +657,7 @@ function gcode(tp,startG="",endG=""){
   if(endG) L.push(...endG.split("\n"));
   return L.join("\n")+"\n";
 }
-function report(m){
-  if(m.experimental) return topologyReport(m);
+function straightWarnings(m){
   const warn=[];
   if(m.clear<0)
     warn.push(`NOZZLE CLEARANCE -- the tip will clip middle risers. Needs pitch >= ${m.minPitch.toFixed(2)} mm, or a smaller/shorter button, or a sharper nozzle.`);
@@ -673,6 +672,12 @@ function report(m){
     warn.push(`VOLUMETRIC FLOW -- ${maxFlow.toFixed(2)} mm3/s exceeds the configured ${P.maxVflow.toFixed(2)} mm3/s limit.`);
   if(P.plies>1)
     warn.push("TWO-PLY -- clearance and bridge figures above describe a single ply only. Ply 2 bridges over ply 1 rather than the bed; validate on a small swatch first.");
+  return warn;
+}
+const warnings=m=>m.experimental?topologyWarnings(m):straightWarnings(m);
+function report(m){
+  if(m.experimental) return topologyReport(m);
+  const warn=straightWarnings(m);
   const num=(v,dp,w=10)=>v.toFixed(dp).padStart(w);
   const L=["",
     `  ${P.lattice} / ${activePattern()}   pitch ${P.pitch} mm   ${P.size} mm square   x${P.plies} ply   rot ${P.rot} deg`,
@@ -715,7 +720,7 @@ const JSON_NAMES={dashes:"dashes",buttons:"endpoint_buttons",posts:"middle_riser
   fButton:"t_button_frac",fTrav:"t_travel_frac",
   roadClear:"unintended_road_clearance_mm",bendRadius:"minimum_bend_radius_mm",
   crossingGap:"minimum_crossing_interval_mm",reserve:"open_path_reserve",
-  foundations:"foundation_supports",recommendedSize:"recommended_coupon_size_mm"};
+  buttonClear:"button_road_margin_mm",recommendedSize:"recommended_coupon_size_mm"};
 function namedMetrics(m){
   const out={};
   for(const [k,v] of Object.entries(m)) out[JSON_NAMES[k]||k]=v;
@@ -744,7 +749,6 @@ const topoPath=(id,family,points,closed=false,meta={})=>
 function topoIntersections(paths){
   const segs=[],out=[],seen=new Set(),eps=1e-8;
   paths.forEach((path,pathIndex)=>{
-    if(path.meta.crossings===false) return;
     const count=path.closed?path.points.length:path.points.length-1;
     for(let seg=0;seg<count;seg++)
       segs.push({path:pathIndex,seg,count,a:path.points[seg],
@@ -835,7 +839,7 @@ function topoSinusoidalStudy(){
   return topoFinalize({
     id:"sinusoidal",title:"Sinusoidal plain weave",tag:"deformed weave coupon",
     note:"A smooth deformation of plain weave, with measurable in-plane path reserve rather than a new topology.",
-    paths,expectedCrossings:36,components:12,recommendedSize:30,
+    paths,expectedCrossings:36,components:12,recommendedSize:32,
     contract:{
       kind:"Finite deformed biaxial weave",
       identity:"6 warp × 6 weft; one crossing per pair; plain-weave parity. Smooth curvature preserves the straight weave's topology.",
@@ -869,11 +873,11 @@ function topoAnnularStudy(){
   }
   return topoFinalize({
     id:"annular",title:"Annular radial weave",tag:"finite radial weave coupon",
-    note:"Four closed circumferential wefts cross eight open spiral warps; the even spoke count closes every alternating ring word.",
+    note:"Four closed circumferential rings cross eight open radial spokes; the even spoke count closes every alternating ring word.",
     paths,expectedCrossings:32,components:12,recommendedSize:48,
     contract:{
       kind:"Finite annular weave",
-      identity:"4 concentric closed wefts × 8 open radial warps; every ring-spoke pair crosses once and alternates by ring-plus-spoke parity.",
+      identity:"4 concentric closed circumferential rings × 8 open radial spokes; every ring-spoke pair crosses once and alternates by ring-plus-spoke parity.",
       mechanism:"Tests how a radial weave accommodates circumference-dependent yarn length and shear without pretending the density is uniform.",
       strategy:"Every high arc is supported only by its neighbouring low/high transition buttons; the centre is deliberately left open.",
       risk:"Fixed ring and spoke counts create a radial density gradient. This coupon does not implement the unequal-pick compensation of production annular cloth.",
@@ -909,26 +913,45 @@ function topoCelticStudy(){
       risk:"The four components are neither mutually linked nor a load-bearing sheet. Mechanical use requires a later inter-component connection design.",
       source:{label:"University of Edinburgh, Celtic Knot Theory",
         url:"https://webhomes.maths.ed.ac.uk/~v1ranick/knots/celtic.pdf"},
-      verify:{open:0,closed:4,self:{"3":4},pairs:{},alternating:true}
+      verify:{open:0,closed:4,self:{"3":4},pairs:{},alternating:true,
+        componentDeterminant:{"3":4}}
     }
   },crossing=>crossing.za>=crossing.zb?"a":"b");
 }
 
+/* Closure lane for the strand leaving slot `slot` at the top: a vertical stub,
+   a quarter arc, a horizontal run, a second arc, a vertical descent outside the
+   braid box, and the mirror image back to the same slot at the bottom. Lanes
+   nest with constant spacing and concentric outer arcs, so every bend radius is
+   at least the innermost arc radius and no lane crosses another. */
 function topoBraidClosure(slot,slots,bottom,top){
-  const x=slots[slot],nest=slots.length-1-slot,level=0.78+nest*0.055;
-  const outer=0.82+nest*0.105,bulge=0.14;
-  const out=[];
-  topoAppendPoints(out,topoCubic([x,top,0],[x,level,0],
-    [outer-bulge,level,0],[outer,level,0],14));
-  topoAppendPoints(out,topoCubic([outer,level,0],[outer+bulge,level*0.55,0],
-    [outer+bulge,-level*0.55,0],[outer,-level,0],24));
-  topoAppendPoints(out,topoCubic([outer,-level,0],[outer-bulge,-level,0],
-    [x,-level,0],[x,bottom,0],14));
+  const nest=slots.length-1-slot,spacing=0.06,r0=0.10;
+  const x=slots[slot],r=r0+nest*spacing,level=top+r0+0.02+nest*spacing;
+  const outer=slots[slots.length-1]+2*r0+0.02+nest*spacing,out=[];
+  const arc=(cx,cy,from,to)=>{
+    const steps=8;
+    for(let i=0;i<=steps;i++){
+      const a=from+(to-from)*i/steps;
+      out.push([cx+r*Math.cos(a),cy+r*Math.sin(a),0]);
+    }
+  };
+  out.push([x,top,0],[x,level-r,0]);
+  arc(x+r,level-r,Math.PI,Math.PI/2);
+  out.push([outer-r,level,0]);
+  arc(outer-r,level-r,Math.PI/2,0);
+  out.push([outer,-level+r,0]);
+  arc(outer-r,-level+r,0,-Math.PI/2);
+  out.push([x+r,-level,0]);
+  arc(x+r,-level+r,-Math.PI/2,-Math.PI);
+  out.push([x,bottom,0]);
   return out;
 }
+/* Braid convention: for generator +i the strand in slot i (left) passes OVER
+   the strand in slot i+1 while they swap; -i puts it under. This is the mirror
+   of Rolfsen's tutorial convention; the shipped words are amphichiral. */
 function topoBraidStudy(spec,n,word){
-  const bottom=-0.68,top=0.68,slots=Array.from({length:n},(_,i)=>
-    n===1?0:-0.55+i*1.1/(n-1));
+  const bottom=-0.72,top=0.72,slots=Array.from({length:n},(_,i)=>
+    n===1?0:-0.26+i*0.52/(n-1));
   const points=Array.from({length:n},(_,i)=>[[slots[i],bottom,0]]);
   const order=Array.from({length:n},(_,i)=>i);
   const push=(strand,x,y,z=0)=>{
@@ -936,14 +959,14 @@ function topoBraidStudy(spec,n,word){
     if(!last||Math.hypot(last[0]-x,last[1]-y,(last[2]||0)-z)>1e-9)
       list.push([x,y,z]);
   };
-  const step=(top-bottom)/(word.length+1);
+  const step=(top-bottom)/word.length,ease=24;
   for(let k=0;k<word.length;k++){
     const generator=word[k],slot=Math.abs(generator)-1;
     if(slot<0||slot>=n-1) throw new Error(`invalid braid generator ${generator}`);
-    const cy=bottom+(k+1)*step,y0=cy-step*0.34,y1=cy+step*0.34;
+    const y0=bottom+k*step,y1=y0+step;
     for(let s=0;s<n;s++) push(order[s],slots[s],y0,0);
-    for(let q=1;q<=15;q++){
-      const u=q/15,e=(1-Math.cos(Math.PI*u))/2,y=y0+(y1-y0)*u;
+    for(let q=1;q<=ease;q++){
+      const u=q/ease,e=(1-Math.cos(Math.PI*u))/2,y=y0+(y1-y0)*u;
       for(let s=0;s<n;s++){
         let x=slots[s],z=0;
         if(s===slot){
@@ -1008,7 +1031,8 @@ function topoChainmailStudy(){
       risk:"A planar two-height print must release every ring contact. Any accidental crossing weld converts a mobile link into a rigid lattice.",
       source:{label:"Klotz, geometric considerations for 4-in-1 chainmail",
         url:"https://arxiv.org/html/2507.20903#S4"},
-      verify:{open:0,closed:10,self:{},pairs:{"2":12},linkingAbs:{"1":12}}
+      verify:{open:0,closed:10,self:{},pairs:{"2":12},linkingAbs:{"1":12},
+        pairDeterminant:{"2":12},words:{"OUOU":6,"OOUU":2,"OOUOUUOU":2}}
     }
   },crossing=>crossing.za>=crossing.zb?"a":"b");
 }
@@ -1020,7 +1044,7 @@ function topoLenoStudy(){
       const sign=strand?1:-1;
       paths.push(topoPath(`leno-${pair}-${strand}`,strand?2:0,
         topoSample(160,false,u=>{
-          const y=-0.78+1.56*u;
+          const y=-0.74+1.48*u;
           return [centre+sign*0.11*Math.cos(Math.PI*(y+0.6)/0.4),y];
         }),false,{kind:"warp",pair,strand}));
     }
@@ -1029,11 +1053,11 @@ function topoLenoStudy(){
     [[-0.84,y],[0.84,y]],false,{kind:"weft",index})));
   return topoFinalize({
     id:"leno",title:"True leno / gauze",tag:"paired doup warps",
-    note:"Each warp pair exchanges sides between picks; one partner passes above and one below every captured weft.",
+    note:"Each doup end passes over every pick from alternating sides of its skeleton end, so the pair twists S then Z with no net twist.",
     paths,expectedCrossings:33,components:10,recommendedSize:28,
     contract:{
       kind:"Finite true-leno weave",
-      identity:"Three doup/skeleton warp pairs × four wefts; partners cross only between picks and exchange which partner passes over each successive pick.",
+      identity:"Three doup/skeleton warp pairs × four wefts; the doup end passes over every pick from alternating sides of its skeleton end and under it between picks, so partner crossings alternate in sign and the pair carries no net twist.",
       mechanism:"The paired warps wrap around each weft to resist yarn slippage while preserving an intentionally open fabric.",
       strategy:"Partner crossings and warp-weft crossings share the same two-level transition grammar; no mock-leno substitution is used.",
       risk:"Printed transition buttons may make the doup crossings rigid instead of frictionally gripping. Openness is modelled; locking force is not.",
@@ -1066,12 +1090,12 @@ function topologyStudies(){
         contract:{
           kind:"Closed-braid knot coupon",
           identity:"Closure of the 3-braid β=(σ₁σ₂⁻¹)²; one component and the reduced alternating diagram of the figure-eight knot 4₁.",
-          mechanism:"A single strand carries the complete braid word and returns through a smooth crossing-free closure lane.",
+          mechanism:"A single strand carries the complete braid word and returns through a crossing-free closure lane of straight runs and constant-radius arcs.",
           strategy:"The closure is merged into the physical component before run splitting, eliminating the former duplicate seam dots.",
           risk:"The long outer closure dominates material and bend radius; its seam is computationally closed but not pull-tested.",
-          source:{label:"Rolfsen, Tutorial on the braid groups",
-            url:"https://arxiv.org/html/1010.4051"},
-          verify:{open:0,closed:1,self:{"4":1},pairs:{},alternating:true}
+          source:{label:"Knot Atlas, 4_1: minimum braid BR(3,{-1,2,-1,2}), determinant 5",
+            url:"https://katlas.org/wiki/4_1"},
+          verify:{open:0,closed:1,self:{"4":1},pairs:{},alternating:true,determinant:5}
         }
       },3,[1,-2,1,-2]),
       topoChainmailStudy(),
@@ -1085,11 +1109,11 @@ function topologyStudies(){
           identity:"Closure of the pure 3-braid β=(σ₁σ₂⁻¹)³; three unknotted components, two crossings per component pair, and pairwise linking number zero.",
           mechanism:"All three components are required for the link: removing any one should release the other two if every crossing remains free.",
           strategy:"Three actual closed component paths are assembled before run splitting; no disconnected decorative closure strokes remain.",
-          risk:"One accidental weld destroys the Brunnian release test. The topology is verified from the diagram, not yet by a physical cut-and-release trial.",
+          risk:"One accidental weld destroys the Brunnian release test, and the shallow braid crossings carry the atlas's longest overpasses. The topology is verified from the diagram, not yet by a physical cut-and-release trial.",
           source:{label:"Borromean braid representation, arXiv:math/0405248",
             url:"https://arxiv.org/abs/math/0405248"},
           verify:{open:0,closed:3,self:{},pairs:{"2":3},
-            linkingAbs:{"0":3},alternating:true}
+            linkingAbs:{"0":3},alternating:true,determinant:16,pairDeterminant:{"0":3}}
         }
       },3,[1,-2,1,-2,1,-2])
     ];
@@ -1108,7 +1132,7 @@ function topologyDefaultParams(study){
   const freeDia=Math.sqrt(4*TOPOLOGY_REFERENCE.sw*P.sh/Math.PI);
   return {topology:study.id,size:study.recommendedSize,plies:1,
     bd:TOPOLOGY_REFERENCE.bd,sw:TOPOLOGY_REFERENCE.sw,
-    bh:Math.max(TOPOLOGY_REFERENCE.minBh,freeDia+TOPOLOGY_REFERENCE.vgap)};
+    bh:Math.ceil(Math.max(TOPOLOGY_REFERENCE.minBh,freeDia+TOPOLOGY_REFERENCE.vgap)*100-1e-6)/100};
 }
 
 function topoArcData(path){
@@ -1140,21 +1164,67 @@ function topoArcPoint(arc,s){
   const u=arc.lens[lo]>1e-12?(s-arc.cum[lo])/arc.lens[lo]:0;
   return [a[0]+(b[0]-a[0])*u,a[1]+(b[1]-a[1])*u];
 }
+/* Emit the source vertices inside [s0,s1] and subdivide only the segments that
+   exceed the step, so the printed polyline never leaves the analysed one. */
 function topoArcSlice(arc,s0,s1){
-  const length=Math.max(0,s1-s0);
-  const maxStep=Math.max(0.25,Math.min(0.6,P.sw*1.25));
-  const count=Math.max(1,Math.ceil(length/maxStep)),out=[];
-  for(let i=0;i<=count;i++) out.push(topoArcPoint(arc,s0+length*i/count));
+  const maxStep=Math.max(0.25,Math.min(0.6,P.sw*1.25)),stops=[s0];
+  if(arc.total>1e-12){
+    for(let wrap=0;wrap<(arc.closed?2:1);wrap++){
+      const offset=wrap*arc.total;
+      for(let i=0;i<arc.count;i++){
+        const s=offset+arc.cum[i];
+        if(s>s0+1e-9&&s<s1-1e-9) stops.push(s);
+      }
+    }
+  }
+  stops.push(Math.max(s0,s1));
+  const out=[topoArcPoint(arc,stops[0])];
+  for(let i=1;i<stops.length;i++){
+    const gap=stops[i]-stops[i-1],n=Math.max(1,Math.ceil(gap/maxStep));
+    for(let j=1;j<=n;j++) out.push(topoArcPoint(arc,stops[i-1]+gap*j/n));
+  }
   return out;
 }
-function topoBridgeHalf(crossing){
+/* Distance from p to the polyline of `arc`, optionally ignoring the segments
+   within `excludeRadius` arclength of `excludeS` (the point's own strand). */
+function topoPolylineDistance(p,arc,excludeS=null,excludeRadius=0){
+  const pts=arc.path.points;let best=Infinity;
+  for(let i=0;i<arc.count;i++){
+    if(excludeS!=null){
+      const s0=arc.cum[i],s1=arc.cum[i+1];
+      let gap=Math.max(0,Math.max(s0-excludeS,excludeS-s1));
+      if(arc.closed) gap=Math.min(gap,Math.max(0,arc.total-Math.max(s1,excludeS)+Math.min(s0,excludeS)));
+      if(gap<excludeRadius) continue;
+    }
+    best=Math.min(best,topoPointSegDistance(p,pts[i],pts[(i+1)%pts.length]));
+  }
+  return best;
+}
+/* Overpass window for one over-branch event. The straight-strand estimate
+   c/sin θ is the starting point; each side is then widened until the transition
+   site clears the under strand's actual polyline by c = D/2 + w/2 + 0.10 mm,
+   capped at 38% of the arclength to the nearest other crossing or open end so
+   one overpass never swallows the next crossing. A capped side that still
+   fails is reported by the button/road margin metric rather than hidden. */
+function topoWindow(event,arc,underArc,nearest){
+  const crossing=event.crossing;
   const la=Math.hypot(...crossing.ta),lb=Math.hypot(...crossing.tb);
   const sine=la>1e-12&&lb>1e-12
     ?Math.abs(topoCross2(crossing.ta,crossing.tb))/(la*lb):0;
-  const buttonRoadClearance=P.bd/2+P.sw/2+0.10;
-  return Math.max(P.sw*2,0.8,buttonRoadClearance/Math.max(sine,0.10));
+  const c=P.bd/2+P.sw/2+0.10,cap=nearest*0.38;
+  const base=Math.min(cap,Math.max(P.sw*2,0.8,c/Math.max(sine,0.10)));
+  const self=underArc===arc;
+  const clear=s=>topoPolylineDistance(topoArcPoint(arc,s),underArc,
+    self?(arc.closed?mod(s,arc.total):Math.max(0,Math.min(arc.total,s))):null,
+    self?P.bd*2:0)>=c-1e-9;
+  const grow=dir=>{
+    let half=base;
+    while(half<cap-1e-9&&!clear(event.s+dir*half)) half=Math.min(cap,half+0.05);
+    return half;
+  };
+  return {before:grow(-1),after:grow(1)};
 }
-function topoPathRuns(pathIndex,arc,events){
+function topoPathRuns(pathIndex,arc,events,arcs){
   const eps=1e-7,total=arc.total;
   events.sort((a,b)=>a.s-b.s);
   const over=events.filter(event=>event.hi).map(event=>{
@@ -1164,20 +1234,20 @@ function topoPathRuns(pathIndex,arc,events){
       const delta=Math.abs(event.s-other.s);
       nearest=Math.min(nearest,arc.closed?Math.min(delta,total-delta):delta);
     }
-    return Object.assign({},event,{
-      half:Math.min(topoBridgeHalf(event.crossing),nearest*0.38)
-    });
+    const underIndex=event.branch==="a"?event.crossing.b:event.crossing.a;
+    return Object.assign({},event,topoWindow(event,arc,arcs[underIndex],nearest));
   });
   const isHigh=s=>over.some(event=>{
-    const delta=Math.abs(s-event.s);
-    return (arc.closed?Math.min(delta,total-delta):delta)<event.half;
+    let d=s-event.s;
+    if(arc.closed) d=mod(d+total/2,total)-total/2;
+    return d<0?-d<event.before:d<event.after;
   });
   const cuts=[0,total];
   for(const event of over){
     if(arc.closed){
-      cuts.push(mod(event.s-event.half,total),mod(event.s+event.half,total));
+      cuts.push(mod(event.s-event.before,total),mod(event.s+event.after,total));
     } else {
-      cuts.push(Math.max(0,event.s-event.half),Math.min(total,event.s+event.half));
+      cuts.push(Math.max(0,event.s-event.before),Math.min(total,event.s+event.after));
     }
   }
   cuts.sort((a,b)=>a-b);
@@ -1237,14 +1307,86 @@ function topoDiagramFacts(study){
     for(let i=0;i<end;i++) if(word[i].hi===word[(i+1)%word.length].hi)
       alternating=false;
   });
+  const closedWords=[];
+  words.forEach((word,pathIndex)=>{
+    if(study.paths[pathIndex].closed) closedWords.push(topoCanonicalWord(word));
+  });
   return {
     open:study.paths.filter(path=>!path.closed).length,
     closed:study.paths.filter(path=>path.closed).length,
     self:topoHist([...selfData.values()]),
     pairs:topoHist([...pairData.values()].map(data=>data.count)),
     linkingAbs:topoHist([...pairData.values()].map(data=>Math.abs(data.writhe/2))),
+    interacting:[...pairData.keys()].map(key=>key.split(":").map(Number)),
+    words:topoHist(closedWords),
     alternating
   };
+}
+/* Canonical over/under word of a closed strand: the smallest rotation of the
+   word or of its reverse, so a ring word compares equal regardless of where
+   the sampled path starts or which way it runs. */
+function topoCanonicalWord(word){
+  const letters=word.map(entry=>entry.hi?"O":"U");
+  let best=null;
+  for(const seq of [letters,letters.slice().reverse()])
+    for(let i=0;i<seq.length;i++){
+      const rotation=seq.slice(i).concat(seq.slice(0,i)).join("");
+      if(best===null||rotation<best) best=rotation;
+    }
+  return best||"";
+}
+/* Fox colouring determinant of the sub-diagram spanned by `pathSet`. Arcs run
+   between consecutive undercrossings, each crossing contributes the row
+   2·over − under_in − under_out, and the determinant of any (n−1) minor is the
+   knot/link determinant: 3 trefoil, 5 figure-eight, 2 Hopf link, 16 Borromean
+   rings, 0 for a split diagram. Exact BigInt Bareiss elimination. */
+function topoDeterminant(study,pathSet){
+  const inSet=new Set(pathSet);
+  const crossings=study.crossings.filter(c=>inSet.has(c.a)&&inSet.has(c.b));
+  if(!crossings.length) return pathSet.length===1?1:0;
+  const encounters=new Map(pathSet.map(index=>[index,[]]));
+  crossings.forEach((crossing,index)=>{
+    encounters.get(crossing.a).push({p:crossing.pa,hi:crossing.over==="a",index,branch:"a"});
+    encounters.get(crossing.b).push({p:crossing.pb,hi:crossing.over==="b",index,branch:"b"});
+  });
+  const arcOf=new Map();let arcs=0;
+  for(const list of encounters.values()){
+    list.sort((a,b)=>a.p-b.p);
+    const unders=list.filter(entry=>!entry.hi).length;
+    if(!unders&&pathSet.length>1) return 0;
+    const k=Math.max(1,unders);let seen=0;
+    for(const entry of list){
+      if(entry.hi) arcOf.set(`${entry.index}:${entry.branch}`,{over:arcs+seen%k});
+      else {
+        arcOf.set(`${entry.index}:${entry.branch}`,{in:arcs+seen%k,out:arcs+(seen+1)%k});
+        seen++;
+      }
+    }
+    arcs+=k;
+  }
+  const n=crossings.length;
+  if(arcs!==n) return 0;
+  if(n===1) return 1;
+  const M=crossings.map(()=>Array(n).fill(0n));
+  crossings.forEach((crossing,index)=>{
+    const over=arcOf.get(`${index}:${crossing.over}`).over;
+    const under=arcOf.get(`${index}:${crossing.over==="a"?"b":"a"}`);
+    M[index][over]+=2n;M[index][under.in]-=1n;M[index][under.out]-=1n;
+  });
+  const m=n-1,A=M.slice(0,m).map(row=>row.slice(0,m));
+  let prev=1n,sign=1n;
+  for(let k=0;k<m-1;k++){
+    if(A[k][k]===0n){
+      const swap=A.findIndex((row,i)=>i>k&&row[k]!==0n);
+      if(swap<0) return 0;
+      [A[k],A[swap]]=[A[swap],A[k]];sign=-sign;
+    }
+    for(let i=k+1;i<m;i++) for(let j=k+1;j<m;j++)
+      A[i][j]=(A[i][j]*A[k][k]-A[i][k]*A[k][j])/prev;
+    prev=A[k][k];
+  }
+  const det=A[m-1][m-1]*sign;
+  return Number(det<0n?-det:det);
 }
 const topoSameHist=(actual,expected)=>{
   const keys=[...new Set([...Object.keys(actual),...Object.keys(expected)])].sort();
@@ -1262,6 +1404,24 @@ function topoContractErrors(study){
     errors.push(`pair-linking profile ${JSON.stringify(actual.linkingAbs)}, expected ${JSON.stringify(expected.linkingAbs)}`);
   if(expected.alternating===true&&!actual.alternating)
     errors.push("declared alternating crossing word is not alternating");
+  if(expected.words&&!topoSameHist(actual.words,expected.words))
+    errors.push(`ring words ${JSON.stringify(actual.words)}, expected ${JSON.stringify(expected.words)}`);
+  if(expected.determinant!=null){
+    const det=topoDeterminant(study,study.paths.map((_,index)=>index));
+    if(det!==expected.determinant)
+      errors.push(`diagram determinant ${det}, expected ${expected.determinant}`);
+  }
+  if(expected.componentDeterminant){
+    const hist=topoHist(study.paths.map((path,index)=>path.closed?topoDeterminant(study,[index]):null)
+      .filter(value=>value!==null));
+    if(!topoSameHist(hist,expected.componentDeterminant))
+      errors.push(`component determinants ${JSON.stringify(hist)}, expected ${JSON.stringify(expected.componentDeterminant)}`);
+  }
+  if(expected.pairDeterminant){
+    const hist=topoHist(actual.interacting.map(pair=>topoDeterminant(study,pair)));
+    if(!topoSameHist(hist,expected.pairDeterminant))
+      errors.push(`pair determinants ${JSON.stringify(hist)}, expected ${JSON.stringify(expected.pairDeterminant)}`);
+  }
   return errors;
 }
 function topoPointSegDistance(p,a,b){
@@ -1280,12 +1440,8 @@ function topoSegmentDistance(a,b,c,d){
   return Math.min(topoPointSegDistance(a,c,d),topoPointSegDistance(b,c,d),
     topoPointSegDistance(c,a,b),topoPointSegDistance(d,a,b));
 }
-function topoGeometryQuality(paths,study,arcs,events,runs){
+function topoGeometryQuality(paths,study,arcs,events,runs,posts){
   const segments=[],crossingSites=new Map();
-  const arcDelta=(arc,a,b)=>{
-    const delta=Math.abs(a-b);
-    return arc.closed?Math.min(delta,arc.total-delta):delta;
-  };
   const pairKey=(a,b)=>a<=b?`${a}:${b}`:`${b}:${a}`;
   for(const crossing of study.crossings){
     const a={path:crossing.a,s:topoArcS(arcs[crossing.a],crossing.pa)};
@@ -1330,9 +1486,11 @@ function topoGeometryQuality(paths,study,arcs,events,runs){
   for(let i=0;i<segments.length;i++) for(let j=i+1;j<segments.length;j++){
     const a=segments[i],b=segments[j];
     if(a.pathIndex===b.pathIndex){
-      const indexDelta=Math.abs(a.seg-b.seg);
-      if(indexDelta<=3||(arcs[a.pathIndex].closed&&indexDelta>=a.count-3)||
-          arcDelta(arcs[a.pathIndex],a.s,b.s)<Math.max(P.bd*2,P.sw*4)) continue;
+      const arc=arcs[a.pathIndex];
+      let gap=Math.max(0,Math.max(a.s0,b.s0)-Math.min(a.s1,b.s1));
+      if(arc.closed)
+        gap=Math.min(gap,Math.max(0,Math.min(a.s0,b.s0)+arc.total-Math.max(a.s1,b.s1)));
+      if(gap<Math.max(P.bd*2,P.sw*4)) continue;
     }
     if(nearIntentionalCrossing(a,b)) continue;
     const dx=Math.max(0,Math.max(Math.min(a.a[0],a.b[0]),Math.min(b.a[0],b.b[0]))-
@@ -1367,13 +1525,34 @@ function topoGeometryQuality(paths,study,arcs,events,runs){
     if(arc.closed&&sites.length>1)
       minCrossingGap=Math.min(minCrossingGap,arc.total-sites[sites.length-1]+sites[0]);
   });
+  /* Button / road margin: every transition riser and open-strand endpoint
+     button is a D-wide dot on the plane of the road it terminates; measure each
+     against every road of a foreign strand (or of its own strand beyond 2·D of
+     arclength) and against every other button. Roads need D/2 + w/2, buttons
+     need D. Negative means contact — the accidental weld the contracts forbid. */
+  const buttons=posts.map(post=>({p:post.p,pathIndex:post.pathIndex,s:post.s}));
+  arcs.forEach((arc,pathIndex)=>{
+    if(arc.closed) return;
+    buttons.push({p:topoArcPoint(arc,0),pathIndex,s:0});
+    buttons.push({p:topoArcPoint(arc,arc.total),pathIndex,s:arc.total});
+  });
+  let buttonClear=Infinity;
+  for(const button of buttons){
+    arcs.forEach((arc,pathIndex)=>{
+      const own=pathIndex===button.pathIndex;
+      const d=topoPolylineDistance(button.p,arc,own?button.s:null,own?P.bd*2:0);
+      buttonClear=Math.min(buttonClear,d-(P.bd/2+P.sw/2));
+    });
+  }
+  for(let i=0;i<buttons.length;i++) for(let j=i+1;j<buttons.length;j++)
+    buttonClear=Math.min(buttonClear,dist(buttons[i].p,buttons[j].p)-P.bd);
   return {
     minCentreGap:isFinite(minCentreGap)?minCentreGap:P.size,
     roadClear:(isFinite(minCentreGap)?minCentreGap:P.size)-P.sw,
+    buttonClear:isFinite(buttonClear)?buttonClear:P.size,
     minBendRadius:isFinite(minBendRadius)?minBendRadius:P.size,
     minCrossingGap:isFinite(minCrossingGap)?minCrossingGap:P.size,
-    reserve:openChord>1e-9?openLength/openChord-1:0,
-    shortestRun:Math.min(...runs.map(run=>run.length))
+    reserve:openChord>1e-9?openLength/openChord-1:0
   };
 }
 function topologyModel(study){
@@ -1398,7 +1577,7 @@ function topologyModel(study){
   }
   const runs=[],transitionSites=[];
   arcs.forEach((arc,pathIndex)=>{
-    const built=topoPathRuns(pathIndex,arc,events[pathIndex]);
+    const built=topoPathRuns(pathIndex,arc,events[pathIndex],arcs);
     runs.push(...built.runs);
     built.transitions.forEach(s=>transitionSites.push({pathIndex,s}));
   });
@@ -1412,8 +1591,7 @@ function topologyModel(study){
     const pointKey=`${Math.round(p[0]*1e5)}:${Math.round(p[1]*1e5)}`;
     if(postByPoint.has(pointKey))
       throw new Error(`${study.id}: coincident transition risers at (${p.map(v=>v.toFixed(3)).join(", ")})`);
-    const post={key:pointKey,p,pathIndex:site.pathIndex,s:site.s,
-      foundation:false,transition:true};
+    const post={key:pointKey,p,pathIndex:site.pathIndex,s:site.s};
     postByPoint.set(pointKey,post);postBySite.set(siteKey(site.pathIndex,site.s),post);
     posts.push(post);
   }
@@ -1427,7 +1605,7 @@ function topologyModel(study){
     run.nodes=[{s:run.s0,post:first},{s:run.s1,post:last}];
   }
   const bridgeSpans=runs.filter(run=>run.hi).map(run=>run.length);
-  const quality=topoGeometryQuality(paths,study,arcs,events,runs);
+  const quality=topoGeometryQuality(paths,study,arcs,events,runs,posts);
   return {study,paths,arcs,events,runs,posts,bridgeSpans,scale,edge,quality,
     transitionSites,pathLength:arcs.reduce((sum,arc)=>sum+arc.total,0)};
 }
@@ -1435,28 +1613,37 @@ function topologyToolpath(study){
   if(P.plies!==1)
     throw new Error("experimental topology coupons are single-ply; set plies to 1");
   const model=topologyModel(study),ops=[],segs=[],passStarts=[],postVisuals=[];
-  const st={dash:0,bridge:0,travel:0,travel3d:0,travelTime:0,drawTime:0,
+  const st={dash:0,bridge:0,travel:0,travelTime:0,drawTime:0,
     travels:0,retracts:0,posts:0,dots:0,buttonVol:0,nd:0,joins:0,ties:0};
+  const zl=z1(),zt=zPost(),zh=z3(),safeZ=zh+Math.max(P.zhop,P.sh,0.2);
+  const put=p=>place(p,0),feed=P.ts/60;
   let cur=null;
-  const travel=(xy,z,safe=false)=>{
-    if(cur&&dist(cur.p,xy)<1e-9&&Math.abs(cur.z-z)<1e-9) return;
-    if(cur){
-      const dxy=dist(cur.p,xy),d3=Math.hypot(dxy,z-cur.z);
-      st.travel+=dxy;st.travel3d+=d3;
-      st.travelTime+=moveTime(d3,P.ts/60,P.acc);
-      if(dxy>1e-9){
-        st.travels++;
-        if(dxy>=Math.max(0,P.retMin)) st.retracts++;
-      }
+  /* One lifted travel per disconnected move. The G-code writer expands it into
+     retract → lift to `hop` → XY → lower → prime, the order the production
+     profiles were verified with, and always retracts: every hop here crosses
+     over deposited strands. A pure z change stays a plain travel. */
+  const travel=(xy,z)=>{
+    if(cur&&dist(cur.p,xy)<1e-9){
+      if(Math.abs(cur.z-z)<1e-9) return;
+      st.travelTime+=moveTime(Math.abs(z-cur.z),feed,P.acc);
       segs.push({a:cur.p,az:cur.z,b:xy,bz:z,k:"t"});
+      ops.push({o:"T",x:xy[0],y:xy[1],z});cur={p:xy,z};return;
     }
-    ops.push({o:"T",x:xy[0],y:xy[1],z,safe});cur={p:xy,z};
-  };
-  const draw=(xy,z,f,k,fam)=>{
     if(cur){
-      const d= Math.hypot(xy[0]-cur.p[0],xy[1]-cur.p[1],z-cur.z);
+      const dxy=dist(cur.p,xy);
+      st.travel+=dxy;st.travels++;st.retracts++;
+      st.travelTime+=moveTime(safeZ-cur.z,feed,P.acc)+moveTime(dxy,feed,P.acc)+
+        moveTime(safeZ-z,feed,P.acc);
+      segs.push({a:cur.p,az:cur.z,b:cur.p,bz:safeZ,k:"t"},
+        {a:cur.p,az:safeZ,b:xy,bz:safeZ,k:"t"},{a:xy,az:safeZ,b:xy,bz:z,k:"t"});
+    }
+    ops.push({o:"T",x:xy[0],y:xy[1],z,hop:safeZ});cur={p:xy,z};
+  };
+  const draw=(xy,z,f,k,fam,timed=true)=>{
+    if(cur){
       segs.push({a:cur.p,az:cur.z,b:xy,bz:z,k,fam});
-      st.drawTime+=moveTime(d,f/60,P.acc);
+      if(timed)
+        st.drawTime+=moveTime(Math.hypot(xy[0]-cur.p[0],xy[1]-cur.p[1],z-cur.z),f/60,P.acc);
     }
     ops.push({o:"D",x:xy[0],y:xy[1],z,f,k});cur={p:xy,z};
   };
@@ -1465,64 +1652,56 @@ function topologyToolpath(study){
     ops.push({o:"S",v,k,x:cur.p[0],y:cur.p[1],z:cur.z});
     st.buttonVol+=v;
   };
-  const dot=(extraRoad=0,full=false)=>{
-    stationary(full?buttonArea()*P.sh*P.pflow:endpointDotVol(extraRoad),"dot");
-    st.dots++;
-  };
+  const dot=(extraRoad=0)=>{stationary(endpointDotVol(extraRoad),"dot");st.dots++;};
   const grow=(p,zf,zt)=>{
-    const n=Math.max(1,P.pstep),vol=riserVol(p,p,zf,zt);
+    const n=Math.max(1,Math.round(P.pstep)),vol=riserVol(p,p,zf,zt);
     for(let i=0;i<n;i++){
       const z=zf+(zt-zf)*(i+1)/n;
       stationary(vol/n,"riser");draw(p,z,P.ps,"p");
     }
     st.posts++;
   };
-  for(let ply=0;ply<P.plies;ply++){
-    const dz=plyDz(ply),shift=(ply%2)?P.pitch/2:0;
-    const zl=z1()+dz,zt=zPost()+dz,zh=z3()+dz;
-    const safeZ=zh+Math.max(P.zhop,P.sh,0.2);
-    const put=p=>place(p,shift);
-    const safeTravel=(p,z)=>{
-      const q=put(p);
-      if(!cur){travel(q,safeZ,true);travel(q,z,true);return q;}
-      travel(cur.p,safeZ,true);travel(q,safeZ,true);travel(q,z,true);return q;
-    };
-    const drawSlice=(arc,s0,s1,z,k,fam)=>{
-      const points=topoArcSlice(arc,s0,s1).map(put);
-      for(let i=1;i<points.length;i++) draw(points[i],z,k==="hi"?P.bs:P.ps,k,fam);
-      return points;
-    };
-    passStarts.push({op:ops.length,pass:1,ply});
-    for(const run of model.runs){
-      if(run.hi) continue;
-      const arc=model.arcs[run.pathIndex],path=model.paths[run.pathIndex];
-      const start=topoArcPoint(arc,run.s0);
-      safeTravel(start,zl);
-      const seam=run.closed&&dist(topoArcPoint(arc,run.s0),topoArcPoint(arc,run.s1))<1e-7;
-      if(!seam) dot();
-      drawSlice(arc,run.s0,run.s1,zl,"lo",path.family);
-      dot(seam?P.bd/2:0);
-      st.dash+=run.length;st.nd++;
+  /* A curved run is one continuous move for the time model; the chords it is
+     emitted as are not stop-and-go segments on the printer. */
+  const drawSlice=(arc,s0,s1,z,k,fam)=>{
+    const points=topoArcSlice(arc,s0,s1).map(put),f=k==="hi"?P.bs:P.ps;
+    let length=0;
+    for(let i=1;i<points.length;i++){
+      length+=dist(points[i-1],points[i]);
+      draw(points[i],z,f,k,fam,false);
     }
-    for(const post of model.posts){
-      const p=put(post.p);
-      safeTravel(post.p,zl);grow(p,zl,zt);
-      postVisuals.push({p,dz,seq:segs.length,ply});
+    st.drawTime+=moveTime(length,f/60,P.acc);
+    return points;
+  };
+  passStarts.push({op:ops.length,pass:1,ply:0});
+  for(const run of model.runs){
+    if(run.hi) continue;
+    const arc=model.arcs[run.pathIndex],path=model.paths[run.pathIndex];
+    travel(put(topoArcPoint(arc,run.s0)),zl);
+    const seam=run.closed&&dist(topoArcPoint(arc,run.s0),topoArcPoint(arc,run.s1))<1e-7;
+    if(!seam) dot();
+    drawSlice(arc,run.s0,run.s1,zl,"lo",path.family);
+    dot(seam?P.bd/2:0);
+    st.dash+=run.length;st.nd++;
+  }
+  for(const post of model.posts){
+    const p=put(post.p);
+    travel(p,zl);grow(p,zl,zt);
+    postVisuals.push({p,dz:0,seq:segs.length,ply:0});
+  }
+  passStarts.push({op:ops.length,pass:2,ply:0});
+  for(const run of model.runs){
+    if(!run.hi) continue;
+    const arc=model.arcs[run.pathIndex],path=model.paths[run.pathIndex],nodes=run.nodes;
+    travel(put(topoArcPoint(arc,nodes[0].s)),zh);dot();
+    for(let i=1;i<nodes.length;i++){
+      drawSlice(arc,nodes[i-1].s,nodes[i].s,zh,"hi",path.family);
+      const closes=run.closed&&i===nodes.length-1&&
+        dist(topoArcPoint(arc,nodes[0].s),topoArcPoint(arc,nodes[i].s))<1e-7;
+      dot(i<nodes.length-1||closes?P.bd/2:0);
+      st.bridge+=nodes[i].s-nodes[i-1].s;
     }
-    passStarts.push({op:ops.length,pass:2,ply});
-    for(const run of model.runs){
-      if(!run.hi) continue;
-      const arc=model.arcs[run.pathIndex],path=model.paths[run.pathIndex],nodes=run.nodes;
-      safeTravel(topoArcPoint(arc,nodes[0].s),zh);dot();
-      for(let i=1;i<nodes.length;i++){
-        drawSlice(arc,nodes[i-1].s,nodes[i].s,zh,"hi",path.family);
-        const closes=run.closed&&i===nodes.length-1&&
-          dist(topoArcPoint(arc,nodes[0].s),topoArcPoint(arc,nodes[i].s))<1e-7;
-        dot(i<nodes.length-1||closes?P.bd/2:0);
-        st.bridge+=nodes[i].s-nodes[i-1].s;
-      }
-      st.nd++;
-    }
+    st.nd++;
   }
   return {ops,segs,st,ds:[],seq:{},passStarts,postVisuals,experimental:true,
     topology:model,study};
@@ -1549,9 +1728,10 @@ function topologyMetrics(tp){
     topologyKind:model.study.contract.kind,topologyIdentity:model.study.contract.identity,
     components:model.study.components,openComponents:facts.open,closedComponents:facts.closed,
     pairInteractions,crossings:model.study.crossings.length,
-    dashes:st.nd,buttons:st.dots,posts:st.posts,foundations:0,stops:st.posts/area,
+    dashes:st.nd,buttons:st.dots,posts:st.posts,stops:st.posts/area,
     longest,clear,minPitch:0,vgap,stretch:0,
-    roadClear:model.quality.roadClear,bendRadius:model.quality.minBendRadius,
+    roadClear:model.quality.roadClear,buttonClear:model.quality.buttonClear,
+    bendRadius:model.quality.minBendRadius,
     crossingGap:model.quality.minCrossingGap,reserve:model.quality.reserve,
     cover:Math.min(1,model.pathLength*P.sw/(P.size*P.size)),tpi:0,
     ext:st.dash+st.bridge,bvol:st.buttonVol,gap,t,
@@ -1561,22 +1741,25 @@ function topologyMetrics(tp){
     referenceButton:TOPOLOGY_REFERENCE.bd,referenceWidth:TOPOLOGY_REFERENCE.sw,
     referenceHeight:topologyDefaultParams(model.study).bh};
 }
-function topologyReport(m){
-  const study=topologyStudy(m.topology);
+function topologyWarnings(m){
   const warn=[`EXPERIMENTAL -- ${m.topologyTitle} has passed diagram and toolpath checks but has no physical print validation.`];
   if(P.size+1e-9<m.recommendedSize)
     warn.push(`COUPON SCALE -- ${P.size.toFixed(1)} mm is below the ${m.recommendedSize.toFixed(1)} mm computationally checked default.`);
-  if(Math.abs(P.bd-m.referenceButton)>1e-9||Math.abs(P.sw-m.referenceWidth)>1e-9||
-      Math.abs(P.bh-m.referenceHeight)>1e-9)
+  if(Math.abs(P.bd-m.referenceButton)>1e-6||Math.abs(P.sw-m.referenceWidth)>1e-6||
+      Math.abs(P.bh-m.referenceHeight)>1e-6)
     warn.push(`REFERENCE GEOMETRY -- the checked default uses a ${m.referenceButton.toFixed(2)} mm button, ${m.referenceWidth.toFixed(2)} mm strand, and ${m.referenceHeight.toFixed(2)} mm button height for this layer height.`);
   if(m.clear<0)
     warn.push("POST CLEARANCE -- neighbouring transition risers can contact the nozzle body. Increase coupon size or reduce button dimensions.");
   else if(m.clear<0.10)
     warn.push(`POST CLEARANCE -- only ${m.clear.toFixed(2)} mm between the nozzle envelope and a neighbouring transition riser.`);
   if(m.roadClear<0)
-    warn.push("ROAD SEPARATION -- non-crossing strand segments overlap in plan and can fuse. Increase field size or reduce strand width.");
+    warn.push("ROAD SEPARATION -- non-crossing strand segments overlap in plan and can fuse. Increase coupon size or reduce strand width.");
   else if(m.roadClear<0.10)
     warn.push(`ROAD SEPARATION -- only ${m.roadClear.toFixed(2)} mm remains between unrelated strand edges.`);
+  if(m.buttonClear<0)
+    warn.push("BUTTON ROAD MARGIN -- a transition riser or endpoint button touches a neighbouring strand or button. Increase coupon size or reduce button dimensions.");
+  else if(m.buttonClear<0.10)
+    warn.push(`BUTTON ROAD MARGIN -- only ${m.buttonClear.toFixed(2)} mm between a riser or endpoint button and a neighbouring strand.`);
   if(m.crossingGap<P.bd+P.sw)
     warn.push("CROSSING INTERVAL -- neighbouring crossings leave too little arclength for separate transition buttons.");
   if(m.bendRadius<P.sw)
@@ -1588,6 +1771,10 @@ function topologyReport(m){
   const maxFlow=Math.max(m.lineFlow,m.stationaryFlow);
   if(P.maxVflow>0&&maxFlow>P.maxVflow)
     warn.push(`VOLUMETRIC FLOW -- ${maxFlow.toFixed(2)} mm3/s exceeds the configured ${P.maxVflow.toFixed(2)} mm3/s limit.`);
+  return warn;
+}
+function topologyReport(m){
+  const study=topologyStudy(m.topology),warn=topologyWarnings(m);
   const num=(v,dp,w=10)=>v.toFixed(dp).padStart(w);
   const L=["",
     `  EXPERIMENTAL / ${m.topologyTitle}   ${P.size} mm coupon   rot ${P.rot} deg`,
@@ -1599,7 +1786,6 @@ function topologyReport(m){
     `  curved runs           ${String(m.dashes).padStart(10)}`,
     `  endpoint buttons      ${String(m.buttons).padStart(10)}`,
     `  transition risers     ${String(m.posts).padStart(10)}`,
-    `  foundation supports   ${String(m.foundations).padStart(10)}`,
     `  stops / cm2           ${num(m.stops,1)}`,
     `  curve length          ${num(m.pathLength,1)} mm`,
     `  areal coverage        ${num(m.cover*100,1,9)}%`,
@@ -1608,6 +1794,7 @@ function topologyReport(m){
     `  longest bridge        ${num(m.longest,2)} mm`,
     `  post clearance        ${num(m.clear,2)} mm`,
     `  unrelated road gap    ${num(m.roadClear,2)} mm`,
+    `  button / road margin  ${num(m.buttonClear,2)} mm`,
     `  minimum bend radius   ${num(m.bendRadius,2)} mm`,
     `  crossing interval     ${num(m.crossingGap,2)} mm`,
     `  vertical gap          ${num(m.vgap,2)} mm`,
@@ -1765,6 +1952,85 @@ function runCheck(log){
     bad++;log("  FAIL  experimental topology registry");
     log(`        study ids ${atlas.map(study=>study.id).join(",")}`);
   }
+  /* Toolpath and metric invariants every experimental stream must satisfy,
+     shared by the generic-profile loop and the printer-profile loop. */
+  const topoStreamErrors=(study,tp,m)=>{
+    const errs=[],model=tp.topology;
+    const eventRuns=model.runs.flatMap(run=>run.crossings.map(event=>({run,event})));
+    if(eventRuns.length!==study.crossings.length*2)
+      errs.push(`crossing branches ${eventRuns.length}, expected ${study.crossings.length*2}`);
+    if(eventRuns.some(({run,event})=>run.hi!==event.hi))
+      errs.push("crossing branch assigned to wrong z run");
+    if(model.runs.some(run=>run.hi&&(!run.nodes||run.nodes.length!==2||
+        run.nodes[0].post===run.nodes[1].post)))
+      errs.push("high run is not bracketed by two distinct transition risers");
+    if(model.posts.length!==model.transitionSites.length)
+      errs.push("transition site / riser count mismatch");
+    if(tp.st.posts!==model.posts.length)
+      errs.push(`riser count ${tp.st.posts}, expected ${model.posts.length}`);
+    if(tp.passStarts.length!==2||tp.passStarts[0].pass!==1||tp.passStarts[1].pass!==2)
+      errs.push("invalid experimental pass markers");
+    if(!tp.ops.length||tp.ops[0].o!=="T") errs.push("op stream does not open with a travel");
+    if(tp.ops.some(op=>!["T","D","S"].includes(op.o)||
+        ("v" in op?!(op.v>0):![op.x,op.y,op.z].every(Number.isFinite))))
+      errs.push("invalid experimental op");
+    const safeZ=z3()+Math.max(P.zhop,P.sh,0.2);
+    let prev=null,lifted=0;
+    for(const op of tp.ops){
+      if(op.o==="T"){
+        if(prev&&dist([op.x,op.y],[prev.x,prev.y])>1e-9&&!(op.hop>=safeZ-1e-9)){
+          errs.push("horizontal travel below safe z");break;
+        }
+        if(prev&&op.hop!=null) lifted++;
+      }
+      if(op.o!=="S") prev=op;
+    }
+    if(tp.st.travels!==lifted||tp.st.retracts!==lifted)
+      errs.push(`travel accounting ${tp.st.travels}/${tp.st.retracts}, expected ${lifted} lifted hops`);
+    const expectedDots=model.runs.reduce((n,run)=>{
+      if(run.hi) return n+2;
+      const arc=model.arcs[run.pathIndex];
+      return n+(run.closed&&dist(topoArcPoint(arc,run.s0),topoArcPoint(arc,run.s1))<1e-7?1:2);
+    },0);
+    const dots=tp.ops.filter(op=>op.o==="S"&&op.k==="dot").length;
+    if(dots!==expectedDots||tp.st.dots!==dots)
+      errs.push(`endpoint dot count ${dots}, expected ${expectedDots}`);
+    const pulses=tp.ops.filter(op=>op.o==="S"&&op.k==="riser").length;
+    if(pulses!==model.posts.length*Math.max(1,Math.round(P.pstep)))
+      errs.push(`riser pulse count ${pulses}`);
+    const stationaryVolume=tp.ops.filter(op=>op.o==="S").reduce((v,op)=>v+op.v,0);
+    if(Math.abs(stationaryVolume-tp.st.buttonVol)>1e-9)
+      errs.push("stationary button volume accounting mismatch");
+    if(!m.experimental||Object.entries(m).some(([,value])=>
+        typeof value==="number"&&!Number.isFinite(value)))
+      errs.push("invalid experimental metrics");
+    if(m.clear<0.10) errs.push(`unsafe recommended post clearance ${m.clear.toFixed(2)} mm`);
+    if(m.roadClear<0.10) errs.push(`unsafe recommended road gap ${m.roadClear.toFixed(2)} mm`);
+    if(m.buttonClear<0.10) errs.push(`unsafe recommended button margin ${m.buttonClear.toFixed(2)} mm`);
+    if(m.bendRadius<P.sw) errs.push(`unsafe recommended bend radius ${m.bendRadius.toFixed(2)} mm`);
+    if(m.crossingGap<P.bd+P.sw)
+      errs.push(`unsafe recommended crossing interval ${m.crossingGap.toFixed(2)} mm`);
+    if(m.longest>4.5) errs.push(`unsafe recommended bridge ${m.longest.toFixed(2)} mm`);
+    if(m.vgap<TOPOLOGY_REFERENCE.vgap-1e-9)
+      errs.push(`vertical gap ${m.vgap.toFixed(3)} mm below the ${TOPOLOGY_REFERENCE.vgap} mm reference`);
+    if(m.bedMargin<0) errs.push("recommended coupon exceeds the bed margin");
+    return errs;
+  };
+  /* Printer-profile G-code contract for lifted travels: retract → lift → XY →
+     lower → prime, one retract per lifted hop regardless of hop length. */
+  const hopGcodeErrors=(tp,g)=>{
+    const lines=g.split("\n"),errs=[];
+    const retractLine=`G1 F${P.retSpeed} E-${P.retract}`,primeLine=`G1 F${P.primeSpeed} E${P.retract}`;
+    const retracts=lines.filter(l=>l===retractLine).length;
+    const primes=lines.filter(l=>l===primeLine).length;
+    if(retracts!==tp.st.retracts||primes!==retracts)
+      errs.push(`hop retraction ${retracts} retract / ${primes} prime / ${tp.st.retracts} lifted hops`);
+    const first=lines.indexOf(retractLine);
+    if(first<0||!lines[first+1].startsWith(`G0 F${P.ts} Z`)||!lines[first+2].startsWith("G0 X")||
+        !lines[first+3].startsWith("G0 Z")||lines[first+4]!==primeLine)
+      errs.push("retract / lift / XY / lower / prime order");
+    return errs;
+  };
   for(const study of atlas){
     Object.assign(P,base);
     Object.assign(P,topologyDefaultParams(study));
@@ -1792,53 +2058,18 @@ function runCheck(log){
     if(study.crossings.some(crossing=>
         !["a","b"].includes(crossing.over)||!crossing.p.every(Number.isFinite)))
       errs.push("invalid crossing");
-    let tp=null,m=null,g="";
+    let tp=null,m=null;
     if(!errs.length){
-      tp=toolpath();m=metrics(tp);g=gcode(tp);
-      const eventRuns=tp.topology.runs.flatMap(run=>
-        run.crossings.map(event=>({run,event})));
-      if(eventRuns.length!==study.crossings.length*2)
-        errs.push(`crossing branches ${eventRuns.length}, expected ${study.crossings.length*2}`);
-      if(eventRuns.some(({run,event})=>run.hi!==event.hi))
-        errs.push("crossing branch assigned to wrong z run");
-      if(tp.topology.runs.some(run=>run.hi&&(!run.nodes||run.nodes.length!==2||
-          run.nodes.some(node=>!node.post.transition||node.post.foundation))))
-        errs.push("high run is not bracketed by exactly two topology-owned risers");
-      if(tp.topology.posts.some(post=>post.foundation||!post.transition))
-        errs.push("non-topological foundation support present");
-      if(tp.topology.posts.length!==tp.topology.transitionSites.length)
-        errs.push("transition site / riser count mismatch");
-      if(tp.st.posts!==tp.topology.posts.length)
-        errs.push(`riser count ${tp.st.posts}, expected ${tp.topology.posts.length}`);
-      if(tp.passStarts.length!==2||tp.passStarts[0].pass!==1||tp.passStarts[1].pass!==2)
-        errs.push("invalid experimental pass markers");
-      if(tp.ops.some(op=>!["T","D","S"].includes(op.o)||
-          ("v" in op?!Number.isFinite(op.v):![op.x,op.y,op.z].every(Number.isFinite))))
-        errs.push("invalid experimental op");
-      const safeZ=z3()+Math.max(P.zhop,P.sh,0.2);
-      let prev=null;
-      for(const op of tp.ops){
-        if(op.o==="T"&&prev&&dist([op.x,op.y],[prev.x,prev.y])>1e-9&&
-            (op.z<safeZ-1e-9||prev.z<safeZ-1e-9)){
-          errs.push("horizontal travel below safe z");break;
-        }
-        if(op.o!=="S") prev=op;
-      }
-      if(!m.experimental||Object.entries(m).some(([,value])=>
-          typeof value==="number"&&!Number.isFinite(value)))
-        errs.push("invalid experimental metrics");
-      if(m.foundations!==0) errs.push("foundation supports reported");
-      if(m.clear<0.10) errs.push(`unsafe recommended post clearance ${m.clear.toFixed(2)} mm`);
-      if(m.roadClear<0.10) errs.push(`unsafe recommended road gap ${m.roadClear.toFixed(2)} mm`);
-      if(m.bendRadius<P.sw) errs.push(`unsafe recommended bend radius ${m.bendRadius.toFixed(2)} mm`);
-      if(m.crossingGap<P.bd+P.sw)
-        errs.push(`unsafe recommended crossing interval ${m.crossingGap.toFixed(2)} mm`);
-      if(m.longest>4.5) errs.push(`unsafe recommended bridge ${m.longest.toFixed(2)} mm`);
-      if(!g.includes(`; EXPERIMENTAL — ${study.title}`)||
-          !g.includes(`; class: ${study.contract.kind}`)||
-          !g.includes("; transition-owned risers only; no sacrificial or foundation supports")||
-          !report(m).includes(`EXPERIMENTAL / ${study.title}`))
-        errs.push("experimental design contract missing from output");
+      try{
+        tp=toolpath();m=metrics(tp);
+        const g=gcode(tp);
+        errs.push(...topoStreamErrors(study,tp,m));
+        if(!g.includes(`; EXPERIMENTAL — ${study.title}`)||
+            !g.includes(`; class: ${study.contract.kind}`)||
+            !g.includes("; transition-owned risers only; no sacrificial or foundation supports")||
+            !report(m).includes(`EXPERIMENTAL / ${study.title}`))
+          errs.push("experimental design contract missing from output");
+      } catch(error){ errs.push(`build threw: ${error.message}`); }
       if(study===atlas[0]){
         P.plies=2;
         try{topologyToolpath(study);errs.push("multi-ply experimental coupon was accepted");}
@@ -1859,10 +2090,12 @@ function runCheck(log){
     for(const study of atlas){
       Object.assign(P,base,def.defaults,{printer:printerName,bed:def.bed.slice()});
       Object.assign(P,topologyDefaultParams(study));
-      const m=metrics(toolpath());
-      if(m.clear<0.10||m.roadClear<0.10||m.bendRadius<P.sw||
-          m.crossingGap<P.bd+P.sw||m.longest>4.5||m.vgap<0.08||m.bedMargin<0)
-        errs.push(`${study.id} outside reference envelope`);
+      try{
+        const tp=toolpath(),m=metrics(tp);
+        const g=gcode(tp,printerDef().start(),printerDef().end());
+        errs.push(...[...topoStreamErrors(study,tp,m),...hopGcodeErrors(tp,g)]
+          .map(error=>`${study.id}: ${error}`));
+      } catch(error){ errs.push(`${study.id}: build threw: ${error.message}`); }
     }
     if(errs.length){
       bad++;log(`  FAIL  experimental atlas on ${profileName} profile`);
@@ -1987,8 +2220,12 @@ outputs (default: --report):
       die(`${path}: draft must be a square NxN array of 0/1`);
     return D;
   };
+  /* Parse everything first, then apply in a fixed order: printer profile →
+     --config → checked atlas default for an experimental topology (only the
+     keys nothing else set) → explicit flags. Flag order never matters. */
   const a=process.argv.slice(2);
   const want={report:false,json:false,check:false,gcode:null,ops:null};
+  const explicit={};let printer=null,config=null;
   for(let i=0;i<a.length;i++){
     const flag=a[i].replace(/^--/,"");
     if(a[i]==="--help"||a[i]==="-h"){console.log(usage);process.exit(0);}
@@ -1997,50 +2234,68 @@ outputs (default: --report):
     else if(flag==="check") want.check=true;
     else if(flag==="gcode") want.gcode=a[++i]||die("--gcode needs a path");
     else if(flag==="ops") want.ops=a[++i]||die("--ops needs a path or -");
-    else if(flag==="offset-dashes") P.offd=true;
-    else if(flag==="no-offset-dashes") P.offd=false;
-    else if(flag==="ground-edges") P.edge=true;
-    else if(flag==="no-ground-edges") P.edge=false;
-    else if(flag==="join") P.join=true;
-    else if(flag==="no-join") P.join=false;
+    else if(flag==="offset-dashes") explicit.offd=true;
+    else if(flag==="no-offset-dashes") explicit.offd=false;
+    else if(flag==="ground-edges") explicit.edge=true;
+    else if(flag==="no-ground-edges") explicit.edge=false;
+    else if(flag==="join") explicit.join=true;
+    else if(flag==="no-join") explicit.join=false;
     else if(flag==="printer"){
-      const v=a[++i];
-      if(!PRINTERS[v]) die(`unknown printer ${v} (${Object.keys(PRINTERS).join(", ")})`);
-      P.printer=v;P.bed=PRINTERS[v].bed.slice();Object.assign(P,PRINTERS[v].defaults||{});
+      printer=a[++i];
+      if(!PRINTERS[printer]) die(`unknown printer ${printer} (${Object.keys(PRINTERS).join(", ")})`);
     }
-    else if(flag==="draft"){P.draft=loadDraft(a[++i]||die("--draft needs a path"));P.pattern="custom";}
-    else if(flag==="config"){
-      const cfg=JSON.parse(fs.readFileSync(a[++i]||die("--config needs a path"),"utf8"));
-      const def=PRINTERS[cfg.printer],defaults=def&&def.defaults;
-      if(defaults) Object.assign(P,defaults);
-      if(def&&!Object.prototype.hasOwnProperty.call(cfg,"bed")) P.bed=def.bed.slice();
-      if("fan" in cfg&&!("fan1" in cfg)) cfg.fan1=cfg.fan;
-      Object.assign(P,cfg);
-    }
+    else if(flag==="draft"){explicit.draft=loadDraft(a[++i]||die("--draft needs a path"));explicit.pattern="custom";}
+    else if(flag==="config") config=JSON.parse(fs.readFileSync(a[++i]||die("--config needs a path"),"utf8"));
     else if(flag==="fan"){
       const v=parseFloat(a[++i]);
       if(!Number.isFinite(v)) die("--fan needs a number");
-      P.fan1=v;P.fan=v;
+      explicit.fan1=v;explicit.fan=v;
     }
     else if(flag in NUM){
       const v=parseFloat(a[++i]);
       if(!Number.isFinite(v)) die(`--${flag} needs a number`);
-      P[NUM[flag]]=v;
+      explicit[NUM[flag]]=v;
     }
-    else if(flag in STR) P[STR[flag]]=a[++i]||die(`--${flag} needs a value`);
+    else if(flag in STR) explicit[STR[flag]]=a[++i]||die(`--${flag} needs a value`);
     else die(`unknown option ${a[i]}\n\n${usage}`);
   }
   if(want.check) process.exit(runCheck(console.log)?0:1);
+  const set=new Set(Object.keys(explicit));
+  if(printer){P.printer=printer;P.bed=PRINTERS[printer].bed.slice();Object.assign(P,PRINTERS[printer].defaults||{});}
+  if(config){
+    const def=PRINTERS[config.printer],defaults=def&&def.defaults;
+    if(defaults) Object.assign(P,defaults);
+    if(def&&!Object.prototype.hasOwnProperty.call(config,"bed")) P.bed=def.bed.slice();
+    if("fan" in config&&!("fan1" in config)) config.fan1=config.fan;
+    Object.assign(P,config);
+    Object.keys(config).forEach(key=>set.add(key));
+  }
+  const topologyIds=["straight",...topologyStudies().map(study=>study.id)];
+  const topology=explicit.topology!=null?explicit.topology:P.topology;
+  if(!topologyIds.includes(topology))
+    die(`unknown topology '${topology}' (${topologyIds.join(", ")})`);
+  if(topology!=="straight"){
+    if("sh" in explicit) P.sh=explicit.sh;
+    const defaults=topologyDefaultParams(topologyStudy(topology));
+    for(const [key,value] of Object.entries(defaults)) if(!set.has(key)) P[key]=value;
+  }
+  Object.assign(P,explicit);
   const biaxialPatterns=["plain","twill","crepe","satin","custom"];
   const triaxialPatterns=["cyclic","twill","directional"];
-  const topologyIds=["straight",...topologyStudies().map(study=>study.id)];
   if(!["biaxial","triaxial"].includes(P.lattice)) die(`unknown lattice '${P.lattice}'`);
-  if(!topologyIds.includes(P.topology))
-    die(`unknown topology '${P.topology}' (${topologyIds.join(", ")})`);
   if(!biaxialPatterns.includes(P.pattern)) die(`unknown biaxial pattern '${P.pattern}'`);
   if(!triaxialPatterns.includes(P.triPattern)) die(`unknown triaxial pattern '${P.triPattern}'`);
   if(P.pattern==="custom"&&!Array.isArray(P.draft)) die("pattern 'custom' needs --draft");
-  const tp=toolpath(),m=metrics(tp);
+  if(!(P.size>0)) die(`size must be positive (got ${P.size})`);
+  if(!(Number.isInteger(P.plies)&&P.plies>=1)) die(`plies must be a positive integer (got ${P.plies})`);
+  if(isExperimental()&&P.plies!==1) die("experimental topology coupons are single-ply; use --plies 1");
+  if(!(Number.isInteger(P.pstep)&&P.pstep>=1)) die(`post-steps must be a positive integer (got ${P.pstep})`);
+  for(const [key,label] of [["ps","print-speed"],["bs","bridge-speed"],["ts","travel-speed"],
+      ["pspd","post-speed"],["retSpeed","retract-speed"],["primeSpeed","prime-speed"],["acc","accel"]])
+    if(!(P[key]>0)) die(`${label} must be positive (got ${P[key]})`);
+  let tp,m;
+  try{tp=toolpath();m=metrics(tp);}
+  catch(error){die(String(error.message||error));}
   if(want.json)
     console.log(JSON.stringify({params:P,metrics:namedMetrics(m)},null,2));
   if(want.gcode){
@@ -2053,4 +2308,5 @@ outputs (default: --report):
     else{fs.writeFileSync(want.ops,payload);console.error(`  wrote ${want.ops}`);}
   }
   if(want.report||!(want.json||want.gcode||want.ops)) console.log(report(m));
+  else if(want.gcode||want.ops) for(const w of warnings(m)) console.error(`  ! ${w}`);
 }

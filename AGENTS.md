@@ -19,7 +19,11 @@ Design rationale, constraints, verification status, and roadmap live in
 
 - Build: none. Open `index.html` in a browser.
 - Test: `bun engine.js --check` — geometry invariant suite; must pass.
-- Smoke: `bun engine.js --report` and `bun engine.js --gcode out.gcode`.
+- Smoke: `bun engine.js --report` and `bun engine.js --gcode out.gcode`;
+  experimental: `bun engine.js --topology braid --report`. `--topology`
+  applies the study's checked atlas default (size, 0.90 mm button, 0.40 mm
+  strand, derived button height, single ply) unless a flag or `--config`
+  overrides that key.
 
 - Print: `bun engine.js --printer coreone --gcode s.gcode` then
   `python print.py s.gcode --host <printer> --key <PrusaLink key> --go`.
@@ -32,6 +36,10 @@ Design rationale, constraints, verification status, and roadmap live in
   (NOTES §2.4). Do not reintroduce centreline z.
 - Dash ordering is load-bearing (reverse-sweep z-safety, NOTES §3); do not
   reorder passes without reading it.
+- Experimental topology scheduler is low → risers → high with every
+  disconnected travel lifted to z3 + max(zhop, sh, 0.2) as one `hop` travel
+  op; it does not use the reverse sweep — keep the lift (checked by
+  `--check`).
 - `index.html` loads the engine as `engine.js?v=N`; bump `N` in the same
   commit as any `engine.js` change, or cached HTML can pair with a stale
   engine and break at runtime.
