@@ -175,7 +175,7 @@ const P = {
   bd:0.9, bh:0.45, sw:0.40, sh:0.20,
   offd:false, offFrac:0.40, ovs:0.30, plies:1, pgap:0.25, tack:3, edge:true, join:true,
   nflat:0.80, ncone:120,
-  ps:2400, bs:3600, ts:9000, pspd:300, pstep:3, pflow:1.10, acc:6000,
+  ps:2400, bs:3600, ts:9000, pspd:300, pstep:3, pflow:1.10, sdot:1, acc:6000,
   flow:1, maxVflow:0, fan1:40, fan:40,
   zhop:0, retract:0, retMin:DEFAULT_RETRACT_MIN_TRAVEL, retSpeed:2400, primeSpeed:2400,
   ht:230, bt:100, printer:"generic", bed:[110,110], draft:CREPE.map(r=>r.slice())
@@ -341,10 +341,13 @@ const buttonArea=()=>Math.PI*Math.pow(P.bd/2,2);
 /* Every dash owns a circular endpoint layer at its own z. The road already
    occupies half a button diameter inside that layer, so stationary extrusion
    only supplies the missing volume. A high dash that climbed through its top
-   layer contributes one additional strand-height of road at its start. */
-const endpointDotVol=(extraRoad=0)=>{
-  const target=buttonArea()*P.sh;
-  const occupied=P.sw*P.sh*(P.bd/2+Math.max(0,extraRoad));
+   layer contributes one additional strand-height of road at its start. The
+   dot that opens a first-layer dash lands right after a travel and prime, so
+   it may be given its own diameter (`sdot` × D) to compensate the starved
+   restart. */
+const endpointDotVol=(extraRoad=0,dia=P.bd)=>{
+  const target=Math.PI*Math.pow(dia/2,2)*P.sh;
+  const occupied=P.sw*P.sh*(dia/2+Math.max(0,extraRoad));
   return Math.max(0.02,(target-occupied)*P.pflow);
 };
 /* The only tall feature is the virtual-middle riser, z_low -> z_post. Its
@@ -387,9 +390,10 @@ function toolpath(){
     ops.push({o:"S",v,k,x:cur.p[0],y:cur.p[1],z:cur.z});
     st.buttonVol+=v;
   };
-  const dot=(extraRoad=0,cornerWeld=false)=>{
-    stationary(endpointDotVol(extraRoad),"dot");
+  const dot=(extraRoad=0,cornerWeld=false,start=false)=>{
+    stationary(endpointDotVol(extraRoad,start?P.bd*P.sdot:P.bd),"dot");
     if(cornerWeld) ops[ops.length-1].weld="corner";
+    if(start) ops[ops.length-1].start=true;
     st.dots++;
   };
   const grow=(from,to,zf,zt,tackFrom)=>{
@@ -480,7 +484,7 @@ function toolpath(){
         if(ni>=0){
           const a=loose.splice(ni,1)[0];
           travel(a.p,zl);
-          if(a.dotPending) dot(0,true);
+          if(a.dotPending) dot(0,true,true);
           arcTie(a.p,s,D.L.f);
         } else{
           travel(s,zl);
@@ -488,7 +492,7 @@ function toolpath(){
           deferStartDot=true;
         }
       } else travel(s,zl);
-      if(!deferStartDot) dot();
+      if(!deferStartDot) dot(0,false,true);
       draw(e,zl,P.ps,"lo",D.L.f);
       dot();
       st.dash+=dist(s,e);st.nd++;
@@ -510,11 +514,11 @@ function toolpath(){
       if(ni>=0){
         const a=loose.splice(ni,1)[0];
         arcTie(cur.p,a.p,prevL?prevL.f:0);
-        if(a.dotPending) dot(0,true);
+        if(a.dotPending) dot(0,true,true);
       }
     }
     // Degenerate fields may leave an untied start; retain its endpoint dot.
-    for(const a of loose) if(a.dotPending){travel(a.p,zl);dot();}
+    for(const a of loose) if(a.dotPending){travel(a.p,zl);dot(0,false,true);}
     passStarts.push({op:ops.length,pass:2,ply});
     for(let i=ds.length-1;i>=0;i--){
       const D=ds[i];if(!D.hi) continue;
@@ -1850,6 +1854,7 @@ function runCheck(log){
     ["three ply",{plies:3,size:22}],
     ["rectangle 40 x 24",{pattern:"plain",size:40,sizeY:24,rot:0}],
     ["rectangle 40 x 24 at 90",{pattern:"plain",size:40,sizeY:24,rot:90,printer:"coreone",bed:[125,110]}],
+    ["start dots 1.25",{pattern:"plain",sdot:1.25}],
   ];
   let bad=0;
   for(const [name,cfg,expectedTriRuns] of cases){
@@ -1955,6 +1960,19 @@ function runCheck(log){
     const m=metrics(tp);
     for(const [k,v] of Object.entries(m))
       if(!Number.isFinite(v)){errs.push(`metric ${k} not finite`);break;}
+    // start dots: exactly one tagged dot per first-layer dash, sized at sdot × D,
+    // and every other dot untouched
+    if(cfg.sdot){
+      const lows=tp.ds.filter(D=>!D.hi).length*P.plies;
+      const starts=tp.ops.filter(op=>op.o==="S"&&op.k==="dot"&&op.start);
+      const plain=endpointDotVol(0),big=endpointDotVol(0,P.bd*P.sdot);
+      if(starts.length!==lows) errs.push(`start dots ${starts.length}, expected ${lows}`);
+      if(starts.some(op=>Math.abs(op.v-big)>1e-9)) errs.push("start dot volume not at sdot × D");
+      if(tp.ops.some(op=>op.o==="S"&&op.k==="dot"&&!op.start&&Math.abs(op.v-plain)>1e-9&&
+          Math.abs(op.v-endpointDotVol(P.sh))>1e-9))
+        errs.push("non-start dot volume changed");
+      if(!(big>plain*1.4)) errs.push("start dot not enlarged");
+    }
     // rectangular fields: every dash stays inside the field plus one pitch, the
     // probe window follows the rotated rectangle, and the bed fit is per axis
     if(cfg.sizeY){
@@ -2204,7 +2222,7 @@ if(typeof window==="undefined"&&typeof process!=="undefined"&&process.argv){
     plies:"plies","tack-every":"tack","ply-gap":"pgap","print-speed":"ps",
     "bridge-speed":"bs","travel-speed":"ts","z-hop":"zhop",retract:"retract",
     "retract-min":"retMin","retract-speed":"retSpeed","prime-speed":"primeSpeed",
-    "post-speed":"pspd","post-steps":"pstep","post-flow":"pflow",accel:"acc",
+    "post-speed":"pspd","post-steps":"pstep","post-flow":"pflow","start-dot":"sdot",accel:"acc",
     flow:"flow","max-volumetric-flow":"maxVflow",
     "pass1-fan":"fan1","pass2-fan":"fan",
     "nozzle-temp":"ht","bed-temp":"bt",
@@ -2227,6 +2245,7 @@ options mirror the app's parameters:
   --plies --tack-every --ply-gap
   --print-speed --bridge-speed --travel-speed --z-hop --retract --retract-min
   --retract-speed --prime-speed --post-speed --post-steps --post-flow
+  --start-dot     diameter multiplier for the dot opening each first-layer dash (default 1)
   --flow --max-volumetric-flow --fan --pass1-fan --pass2-fan
   --accel --nozzle-temp --bed-temp --nozzle-flat --nozzle-cone
   --draft FILE    JSON NxN array of 0/1 (warp over = 1); implies custom

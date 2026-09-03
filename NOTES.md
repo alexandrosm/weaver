@@ -919,6 +919,14 @@ rectangle the margin allows (250 × 210 mm MK4S at pitch 3.75 mm → 235 × 195)
 Experimental topology coupons stay square and use a button-envelope margin.
 Each profile emits its verified startup/purge/shutdown sequence.
 
+The dot that opens each first-layer dash is deposited right after a travel
+and prime, so it is the one a starved restart shrinks. `sdot` (`--start-dot`,
+the app's *Start dot diameter* control) scales that dot's diameter only; its
+volume follows the endpoint-layer model at the larger diameter, closing dots
+and every high-plane dot are untouched, and the op stream tags it `start`.
+The check suite asserts one tagged dot per first-layer dash at the enlarged
+volume and every other dot unchanged.
+
 ```bash
 bun engine.js --printer coreone --gcode pla.gcode
 bun engine.js --printer mk4spp --size 192 --rotate 90 --gcode pp.gcode
