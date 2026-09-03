@@ -358,7 +358,7 @@ button:disabled{cursor:not-allowed;opacity:.38}
 </main>
 </div>
 
-<script src="engine.js?v=23"></script>
+<script src="engine.js?v=24"></script>
 <script>
 "use strict";
 /* UI for engine.js, which the script tag above loads first — geometry,
@@ -408,12 +408,14 @@ const OUTPUT_GROUPS=[
     {type:"printer",id:"prsel"}]},
   {t:"Build plate",open:true,items:[
     {type:"pair",items:[
-      {k:"size",l:"Square size",u:"mm",min:10,max:300,st:0.1,dp:3},
-      {k:"rot",l:"Rotation",u:"°",min:-180,max:180,st:1,dp:0}]},
+      {k:"size",l:"Width",u:"mm",min:10,max:300,st:0.1,dp:3},
+      {k:"sizeY",l:"Depth (0 = square)",u:"mm",min:0,max:300,st:0.1,dp:3}]},
+    {k:"rot",l:"Rotation",u:"°",min:-180,max:180,st:1,dp:0},
     {type:"pair",items:[
       {k:"bedW",l:"Bed width",u:"mm",min:50,max:500,st:1,dp:0},
       {k:"bedD",l:"Bed depth",u:"mm",min:50,max:500,st:1,dp:0}]},
     {type:"action",id:"fitbed",l:"Fit largest safe square to selected bed"},
+    {type:"action",id:"fillbed",l:"Fill selected bed (rectangle at 0°)"},
     {type:"note",id:"bednote",t:"Selected bed and two-pitch safety margin determine the maximum."}]},
   {t:"Nozzle & bead",open:true,items:[
     {type:"pair",items:[
@@ -523,7 +525,16 @@ function buildControls(){
   const onControlClick=e=>{
     const b=e.target.closest("button");if(!b) return;
     if(b.id==="fitbed"){
-      P.size=Math.floor((printBounds().maxSize+1e-9)*1000)/1000;
+      P.size=Math.floor((printBounds().maxSize+1e-9)*1000)/1000;P.sizeY=0;
+      syncControls();recompute();return;
+    }
+    if(b.id==="fillbed"){
+      if(isExperimental()){P.size=Math.floor((printBounds().maxSize+1e-9)*1000)/1000;}
+      else {
+        P.rot=0;
+        const rect=printBounds().maxRect;
+        P.size=Math.floor((rect[0]+1e-9)*1000)/1000;P.sizeY=Math.floor((rect[1]+1e-9)*1000)/1000;
+      }
       syncControls();recompute();return;
     }
     const seg=b.parentElement.dataset.seg;
@@ -577,7 +588,7 @@ function syncControls(){
   const pitchLabel=document.querySelector('label[for="pitch_n"]');
   const sizeLabel=document.querySelector('label[for="size_n"]');
   if(pitchLabel) pitchLabel.textContent=experimental?"Pitch (straight only)":"Pitch";
-  if(sizeLabel) sizeLabel.textContent=experimental?"Coupon size":"Square size";
+  if(sizeLabel) sizeLabel.textContent=experimental?"Coupon size":"Width";
   for(const key of ["edge","join","offd"]){
     const button=document.querySelector(`[data-tog="${key}"]`);
     if(button){
@@ -585,7 +596,7 @@ function syncControls(){
       button.title=experimental?"Not part of the selected topology contract.":"";
     }
   }
-  for(const key of ["pitch","ovs","offFrac","plies","tack","pgap"]){
+  for(const key of ["pitch","ovs","offFrac","plies","tack","pgap","sizeY"]){
     for(const suffix of ["_n","_r"]){
       const input=$(key+suffix);
       if(input){
@@ -625,9 +636,11 @@ function syncControls(){
   }
   const bounds=printBounds(),fits=bounds.bedMargin>=-1e-9;
   $("size_n").setAttribute("aria-invalid",String(!fits));
+  $("sizeY_n").setAttribute("aria-invalid",String(!fits));
+  const rect=bounds.maxRect&&!experimental?` · full rectangle at ${P.rot}° is ${bounds.maxRect[0].toFixed(1)} × ${bounds.maxRect[1].toFixed(1)} mm`:"";
   $("bednote").textContent=`${(P.bed[0]*2).toFixed(0)} × ${(P.bed[1]*2).toFixed(0)} mm bed · `+
-    `maximum safe square at ${P.rot}° is ${bounds.maxSize.toFixed(3)} mm · `+
-    (fits?`${bounds.bedMargin.toFixed(2)} mm margin remains`:`current size exceeds it by ${(-bounds.bedMargin).toFixed(2)} mm`);
+    `maximum safe square at ${P.rot}° is ${bounds.maxSize.toFixed(3)} mm${rect} · `+
+    (fits?`${bounds.bedMargin.toFixed(2)} mm margin remains`:`current field exceeds it by ${(-bounds.bedMargin).toFixed(2)} mm`);
 }
 
 /* ==================================================================
@@ -1005,7 +1018,7 @@ atlasEl.addEventListener("click",event=>{
   const button=event.target.closest("[data-use-topology]");
   if(!button) return;
   const study=topologyStudy(button.dataset.useTopology);
-  if(!isExperimental()) STRAIGHT_DESIGN={bd:P.bd,bh:P.bh,sw:P.sw,size:P.size,plies:P.plies};
+  if(!isExperimental()) STRAIGHT_DESIGN={bd:P.bd,bh:P.bh,sw:P.sw,size:P.size,sizeY:P.sizeY,plies:P.plies};
   Object.assign(P,topologyDefaultParams(study));
   syncControls();recompute();
 });
@@ -1271,7 +1284,7 @@ $("vmode").addEventListener("click",e=>{
   const b=e.target.closest("button");if(!b) return;
   activatePreviewMode(b.dataset.vm);
   if(vmode==="atlas"&&!isExperimental()){
-    STRAIGHT_DESIGN={bd:P.bd,bh:P.bh,sw:P.sw,size:P.size,plies:P.plies};
+    STRAIGHT_DESIGN={bd:P.bd,bh:P.bh,sw:P.sw,size:P.size,sizeY:P.sizeY,plies:P.plies};
     Object.assign(P,topologyDefaultParams(ATLAS[0]));
     syncPreviewMode();syncControls();recompute();return;
   }

@@ -171,7 +171,7 @@ const PRINTERS={
 const printerDef=()=>PRINTERS[P.printer]||PRINTERS.generic;
 
 const P = {
-  topology:"straight", lattice:"biaxial", pattern:"twill", triPattern:"cyclic", pitch:3.6, size:30, rot:45,
+  topology:"straight", lattice:"biaxial", pattern:"twill", triPattern:"cyclic", pitch:3.6, size:30, sizeY:0, rot:45,
   bd:0.9, bh:0.45, sw:0.40, sh:0.20,
   offd:false, offFrac:0.40, ovs:0.30, plies:1, pgap:0.25, tack:3, edge:true, join:true,
   nflat:0.80, ncone:120,
@@ -181,15 +181,25 @@ const P = {
   ht:230, bt:100, printer:"generic", bed:[110,110], draft:CREPE.map(r=>r.slice())
 };
 const isExperimental=()=>P.topology!=="straight";
+/* Field extents: `size` is the width; `sizeY` > 0 gives a rectangular field
+   (straight family only — experimental coupons are always square). */
+const fieldSize=()=>[P.size,!isExperimental()&&P.sizeY>0?P.sizeY:P.size];
+const fieldLabel=()=>{
+  const [W,H]=fieldSize();
+  return isExperimental()?`${W} mm coupon`:W===H?`${W} mm square`:`${W} x ${H} mm`;
+};
 function printBounds(){
-  const a=P.rot*Math.PI/180;
-  const factor=Math.abs(Math.cos(a))+Math.abs(Math.sin(a));
+  const a=P.rot*Math.PI/180,c=Math.abs(Math.cos(a)),s=Math.abs(Math.sin(a));
+  const factor=c+s,[W,H]=fieldSize();
   const margin=isExperimental()?Math.max(2,P.bd*2):2*P.pitch;
-  const modelHalf=P.size*factor/2,probeHalf=modelHalf+margin;
-  const bedHalf=Math.min(P.bed[0],P.bed[1]);
-  return {factor,margin,modelHalf,probeHalf,
-    maxSize:Math.max(0,2*(bedHalf-margin)/factor),
-    bedMargin:bedHalf-probeHalf};
+  const halfX=W/2*c+H/2*s,halfY=W/2*s+H/2*c;
+  const probeHalfX=halfX+margin,probeHalfY=halfY+margin;
+  const axisAligned=Math.abs(Math.round(P.rot/90)*90-P.rot)<1e-9;
+  const swap=axisAligned&&Math.round(P.rot/90)%2!==0;
+  return {factor,margin,probeHalfX,probeHalfY,
+    maxSize:Math.max(0,2*(Math.min(P.bed[0],P.bed[1])-margin)/factor),
+    maxRect:axisAligned?[2*(P.bed[swap?1:0]-margin),2*(P.bed[swap?0:1]-margin)]:null,
+    bedMargin:Math.min(P.bed[0]-probeHalfX,P.bed[1]-probeHalfY)};
 }
 const z1=()=>P.sh, zPost=()=>P.bh, z3=()=>P.bh+P.sh;
 const offAmt=()=>P.offd?P.bd*P.offFrac:0;
@@ -240,23 +250,23 @@ function highAt(A,B,rule){
 const activePattern=()=>isExperimental()?P.topology:
   (P.lattice==="triaxial"?P.triPattern:P.pattern);
 function buildLines(){
-  const half=P.size/2,out=[];
+  const [W,H]=fieldSize(),out=[];
   families().forEach((F,f)=>{
-    const reach=Math.abs(F.n[0])*half+Math.abs(F.n[1])*half;
+    const reach=Math.abs(F.n[0])*W/2+Math.abs(F.n[1])*H/2;
     const k0=Math.ceil((-reach-F.ph*P.pitch)/P.pitch),k1=Math.floor((reach-F.ph*P.pitch)/P.pitch);
     for(let k=k0;k<=k1;k++) out.push({f,i:k,n:F.n,d:F.d,c:(k+F.ph)*P.pitch});
   });
   return out;
 }
 function crossings(L,lines,rule){
-  const half=P.size/2,p0=[L.c*L.n[0],L.c*L.n[1]],out=[];
+  const [W,H]=fieldSize(),p0=[L.c*L.n[0],L.c*L.n[1]],out=[];
   for(const M of lines){
     if(M.f===L.f) continue;
     const den=L.d[0]*M.n[0]+L.d[1]*M.n[1];
     if(Math.abs(den)<1e-9) continue;
     const t=(M.c-(p0[0]*M.n[0]+p0[1]*M.n[1]))/den;
     const x=p0[0]+t*L.d[0],y=p0[1]+t*L.d[1];
-    if(Math.abs(x)>half+1e-9||Math.abs(y)>half+1e-9) continue;
+    if(Math.abs(x)>W/2+1e-9||Math.abs(y)>H/2+1e-9) continue;
     out.push({t,hi:highAt(L,M,rule)});
   }
   out.sort((a,b)=>a.t-b.t); return out;
@@ -549,7 +559,7 @@ const moveTime=(L,v,a)=>{
 const nozHalf=()=>(P.nflat+2*Math.max(0,P.bh-P.sh)*Math.tan(P.ncone*Math.PI/360))/2;
 function metrics(tp){
   if(tp.experimental) return topologyMetrics(tp);
-  const ds=tp.ds,st=tp.st,area=Math.pow(P.size/10,2);
+  const ds=tp.ds,st=tp.st,[W,H]=fieldSize(),area=W*H/100;
   let longest=0;const lows=[],posts=[],spans=[];
   for(const D of ds){
     const [s,e]=dashPts(D);spans.push(dist(s,e));
@@ -605,16 +615,16 @@ function gcode(tp,startG="",endG=""){
     L.push(`; button ${nx(P.bd)} x ${nx(P.bh)} mm   strand ${nx(P.sw)} x ${nx(P.sh)} mm`);
     L.push("; transition-owned risers only; no sacrificial or foundation supports");
   } else {
-    L.push(`; ${P.lattice} / ${activePattern()}  pitch ${P.pitch} mm  ${P.size} mm square  x${P.plies} ply  rot ${P.rot}deg`);
+    L.push(`; ${P.lattice} / ${activePattern()}  pitch ${P.pitch} mm  ${fieldLabel()}  x${P.plies} ply  rot ${P.rot}deg`);
     L.push(`; button ${P.bd} x ${P.bh} mm   strand ${P.sw} x ${P.sh} mm   offset dashes ${P.offd?"on":"off"}`);
   }
   L.push(`; model flow ${(P.flow*100).toFixed(0)}%   pass fans ${P.fan1}/${P.fan}%`);
   L.push(`; travel z-hop ${P.zhop} mm   retract ${P.retract} mm above ${P.retMin} mm @ ${P.retSpeed}/${P.primeSpeed} mm/min`);
   L.push("G21 ; mm","G90 ; absolute moves","M83 ; relative extrusion");
   if(printerDef().probe){
-    const bounds=printBounds(),h=bounds.probeHalf;
-    L.push(`M555 X${Math.max(0,P.bed[0]-h).toFixed(1)} Y${Math.max(0,P.bed[1]-h).toFixed(1)}`+
-           ` W${(2*h).toFixed(1)} H${(2*h).toFixed(1)} ; probe print bounds plus ${bounds.margin.toFixed(1)} mm margin`);
+    const bounds=printBounds(),hx=bounds.probeHalfX,hy=bounds.probeHalfY;
+    L.push(`M555 X${Math.max(0,P.bed[0]-hx).toFixed(1)} Y${Math.max(0,P.bed[1]-hy).toFixed(1)}`+
+           ` W${(2*hx).toFixed(1)} H${(2*hy).toFixed(1)} ; probe print bounds plus ${bounds.margin.toFixed(1)} mm margin`);
   } else {
     L.push(`M140 S${P.bt}`,`M104 S${P.ht}`,`M190 S${P.bt}`,`M109 S${P.ht}`);
   }
@@ -680,7 +690,7 @@ function report(m){
   const warn=straightWarnings(m);
   const num=(v,dp,w=10)=>v.toFixed(dp).padStart(w);
   const L=["",
-    `  ${P.lattice} / ${activePattern()}   pitch ${P.pitch} mm   ${P.size} mm square   x${P.plies} ply   rot ${P.rot} deg`,
+    `  ${P.lattice} / ${activePattern()}   pitch ${P.pitch} mm   ${fieldLabel()}   x${P.plies} ply   rot ${P.rot} deg`,
     "  "+"-".repeat(62),
     `  endpoint buttons      ${String(m.buttons).padStart(10)}`,
     `  middle risers         ${String(m.posts).padStart(10)}`,
@@ -1130,7 +1140,7 @@ const topologyStudy=id=>{
 const TOPOLOGY_REFERENCE=Object.freeze({bd:0.90,sw:0.40,vgap:0.13,minBh:0.45});
 function topologyDefaultParams(study){
   const freeDia=Math.sqrt(4*TOPOLOGY_REFERENCE.sw*P.sh/Math.PI);
-  return {topology:study.id,size:study.recommendedSize,plies:1,
+  return {topology:study.id,size:study.recommendedSize,sizeY:0,plies:1,
     bd:TOPOLOGY_REFERENCE.bd,sw:TOPOLOGY_REFERENCE.sw,
     bh:Math.ceil(Math.max(TOPOLOGY_REFERENCE.minBh,freeDia+TOPOLOGY_REFERENCE.vgap)*100-1e-6)/100};
 }
@@ -1838,6 +1848,8 @@ function runCheck(log){
     ["triaxial directional",{lattice:"triaxial",triPattern:"directional",pitch:6.8,offd:false,size:34},[1,2,2]],
     ["two ply",{plies:2,size:26}],
     ["three ply",{plies:3,size:22}],
+    ["rectangle 40 x 24",{pattern:"plain",size:40,sizeY:24,rot:0}],
+    ["rectangle 40 x 24 at 90",{pattern:"plain",size:40,sizeY:24,rot:90,printer:"coreone",bed:[125,110]}],
   ];
   let bad=0;
   for(const [name,cfg,expectedTriRuns] of cases){
@@ -1943,6 +1955,20 @@ function runCheck(log){
     const m=metrics(tp);
     for(const [k,v] of Object.entries(m))
       if(!Number.isFinite(v)){errs.push(`metric ${k} not finite`);break;}
+    // rectangular fields: every dash stays inside the field plus one pitch, the
+    // probe window follows the rotated rectangle, and the bed fit is per axis
+    if(cfg.sizeY){
+      const [W,H]=fieldSize(),bounds=printBounds(),swap=Math.round(P.rot/90)%2!==0;
+      const wantX=(swap?H:W)/2+bounds.margin,wantY=(swap?W:H)/2+bounds.margin;
+      if(Math.abs(bounds.probeHalfX-wantX)>1e-9||Math.abs(bounds.probeHalfY-wantY)>1e-9)
+        errs.push(`probe window ${bounds.probeHalfX.toFixed(2)} x ${bounds.probeHalfY.toFixed(2)}, expected ${wantX} x ${wantY}`);
+      if(Math.abs(bounds.bedMargin-Math.min(P.bed[0]-wantX,P.bed[1]-wantY))>1e-9)
+        errs.push("rectangular bed margin is not the per-axis minimum");
+      if(tp.ds.some(D=>dashPts(D).some(p=>Math.abs(p[0])>W/2+P.pitch||Math.abs(p[1])>H/2+P.pitch)))
+        errs.push("dash leaves the rectangular field");
+      if(printerDef().probe&&!gcode(tp).includes(`M555 X${(P.bed[0]-wantX).toFixed(1)} Y${(P.bed[1]-wantY).toFixed(1)} W${(2*wantX).toFixed(1)} H${(2*wantY).toFixed(1)}`))
+        errs.push("rectangular probe window missing from G-code");
+    }
     if(errs.length){bad++;log(`  FAIL  ${name}`);errs.slice(0,4).forEach(e=>log(`        ${e}`));}
     else log(`  ok    ${name}  (${tp.ops.length} ops, ${m.buttons} endpoint buttons, ${m.posts} middle risers)`);
   }
@@ -2173,7 +2199,7 @@ function runCheck(log){
  * ========================================================================== */
 if(typeof window==="undefined"&&typeof process!=="undefined"&&process.argv){
   const fs=require("fs");
-  const NUM={pitch:"pitch",size:"size",rotate:"rot","button-d":"bd","button-h":"bh",
+  const NUM={pitch:"pitch",size:"size","size-y":"sizeY",rotate:"rot","button-d":"bd","button-h":"bh",
     "strand-w":"sw","strand-h":"sh","offset-frac":"offFrac",overshoot:"ovs",
     plies:"plies","tack-every":"tack","ply-gap":"pgap","print-speed":"ps",
     "bridge-speed":"bs","travel-speed":"ts","z-hop":"zhop",retract:"retract",
@@ -2193,7 +2219,8 @@ options mirror the app's parameters:
   --lattice biaxial|triaxial   --pattern plain|twill|crepe|satin|custom
   --triaxial-pattern cyclic|twill|directional
   --topology straight|sinusoidal|annular|celtic|braid|chainmail|leno|borromean
-  --pitch --size --rotate --button-d --button-h --strand-w --strand-h
+  --pitch --size --size-y --rotate --button-d --button-h --strand-w --strand-h
+                  (--size-y > 0 makes a rectangular field; straight family only)
   --offset-dashes / --no-offset-dashes   --offset-frac --overshoot
   --ground-edges / --no-ground-edges     bed-anchor boundary high runs (default on)
   --join / --no-join                     selvedge U-turns joining threads at the edge (default on)

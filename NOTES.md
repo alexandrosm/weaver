@@ -910,14 +910,19 @@ PrusaLink uploader for Buddy printers (Core One, MK4, XL): PUT to
 "maker"), optional print-after-upload. The engine owns two matching Buddy
 profiles. `coreone` targets the device-authoritative 0.6 mm nozzle and PLA;
 `mk4spp` targets the device-authoritative 0.5 mm nozzle and the physically
-successful Fiberlogy PP envelope. Production weaves centre the field and
-compute area-limited M555 probing from the rotated square plus a two-pitch
-margin. Experimental topology uses a button-envelope margin. Each profile
-emits its verified startup/purge/shutdown sequence.
+successful Fiberlogy PP envelope. Production weaves centre the field, which
+is a square of `size` or, with `sizeY` > 0 (`--size-y`, the app's Depth
+control), a `size × sizeY` rectangle; the M555 probe window is the rotated
+field's bounding box plus a two-pitch margin, and bed fit is checked per axis.
+The app's *Fill selected bed* action sets rotation 0 and the largest
+rectangle the margin allows (250 × 210 mm MK4S at pitch 3.75 mm → 235 × 195).
+Experimental topology coupons stay square and use a button-envelope margin.
+Each profile emits its verified startup/purge/shutdown sequence.
 
 ```bash
 bun engine.js --printer coreone --gcode pla.gcode
 bun engine.js --printer mk4spp --size 192 --rotate 90 --gcode pp.gcode
+bun engine.js --printer mk4spp --size 235 --size-y 195 --rotate 0 --gcode pp_full.gcode
 python print.py pp.gcode --host <printer-ip> --key <key> --go
 ```
 
